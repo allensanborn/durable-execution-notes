@@ -12,6 +12,10 @@ Working notes on durable-execution engines: how they actually behave, where thei
 
   The argument for why this belongs in a runtime rather than a gateway is the durable case: a workflow authorized on Tuesday, resumed three days later from a timer, must call an API as a user whose access token expired two days ago and who is not online to re-consent. What survives those three days cannot be a token; it has to be a non-secret delegation context from which a fresh token is minted at call time.
 
+## Verification
+
+- [**Verification report**](verification-report.md) — every falsifiable claim in the two documents above, checked against primary sources: repositories cloned and read at pinned commits, official documentation, and the relevant RFCs. It found three refuted claims, including one that reversed a conclusion, and it is published alongside the documents rather than folded silently into them.
+
 ## Conventions
 
 Version-dependent claims are dated or pinned to a package version where it matters, because the answers move. Verified behavior is stated as verified; everything else is stated as an argument.

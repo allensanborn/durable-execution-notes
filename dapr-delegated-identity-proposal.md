@@ -30,9 +30,13 @@ The design goal is that application and activity code is **byte-for-byte
 unchanged**. No token ever enters the application process, the workflow input or
 output, or the state store.
 
-> **Note on schema fidelity.** YAML field names for `MCPServer` and `HTTPEndpoint`
-> below are illustrative sketches, not verified against the shipped 1.18 CRDs.
-> They need to be reconciled against the real specs before this proposal is filed.
+> **Note on schema fidelity.** The `MCPServer` YAML below has been reconciled
+> against `pkg/apis/mcpserver/v1alpha1/types.go` at tag `v1.18.3`. An earlier
+> draft sketched it from memory and was wrong in every structural element: there
+> is no `spec.transport`, `url` and `auth` live under the transport rather than
+> at `spec` top level, and `MCPAuth` has no `clientCredentials` key. The
+> `HTTPEndpoint` blocks have **not** been verified the same way and remain
+> sketches.
 
 ---
 
@@ -52,13 +56,16 @@ Dapr has spent several releases building a strong workload identity story:
   ID, with the audience requested through `--sentry-request-jwt-audiences` or the
   `dapr.io/sentry-request-jwt-audiences` annotation.
 - **1.18** added **per-audience token SVIDs** in Sentry, and shipped the
-  **`MCPServer`** resource with built-in workflow orchestration for MCP. Its auth
-  modes are static header injection, OAuth2 client credentials (secret fetched at
-  call time from a Dapr secret store), and SPIFFE JWT-SVID injection.
+  **`MCPServer`** resource with built-in workflow orchestration for MCP. `MCPAuth`
+  offers two credential modes — OAuth2 client credentials (`auth.oauth2`, with the
+  client secret resolved at call time via `auth.secretStore`) and SPIFFE JWT-SVID
+  injection (`auth.spiffe.jwt`, naming the header, an optional value prefix, and a
+  required audience). Static headers are configured separately as
+  `spec.endpoint.<transport>.headers`, alongside `auth` rather than inside it.
 
 Two things follow from this. First, Dapr is unambiguously already in the identity
 business — Sentry is a CA *and* an OIDC issuer, and daprd already attaches
-credentials to outbound tool calls. Second, every one of those mechanisms answers
+credentials to outbound tool calls when configured to. Second, every one of those mechanisms answers
 only "who is calling."
 
 ### 2.2 The gap
@@ -82,7 +89,7 @@ The nearest existing pieces each fail for a distinct reason:
 | `secretstores` | Static credentials; wrong shape entirely |
 | `crypto` | Key operations on payloads, not token issuance |
 | Component Azure auth profiles | Perform a real exchange, but hardcoded per cloud and not reachable from application or workflow code |
-| `MCPServer.auth` (1.18) | Client credentials and SVID injection — both app identity |
+| `MCPServer.auth` (1.18) | `oauth2` client credentials and `spiffe.jwt` SVID injection — both app identity. `MCPAuth` is a two-variant union this proposal extends to three |
 
 ### 2.3 Why agents make this acute
 
@@ -104,17 +111,24 @@ authorization work for you: row-level security, per-user grants, masking policie
 and `CURRENT_USER()` all resolve correctly without reimplementation in the agent
 tier.
 
-The MCP specification's security guidance independently forbids raw token
-passthrough — an MCP server must not forward the token it received from its
-client to an upstream API. Token exchange is the sanctioned way to honor that rule
-without losing the user's identity.
+The MCP specification (revision 2026-07-28) independently forbids raw token
+passthrough: *"MCP servers **MUST NOT** accept or transit any other tokens"*
+([Authorization, Token Handling](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)),
+reinforced in [Security Best Practices, Token
+Passthrough](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices).
+Token exchange is the sanctioned way to honor that rule without losing the user's
+identity.
 
 ### 2.4 Why this belongs in Dapr and not only in a gateway
 
 An egress proxy (agentgateway, Envoy, an AI gateway) can perform token exchange
 today. OSS agentgateway's `backendAuth.oauthTokenExchange` covers RFC 8693, RFC
-7523 JWT-bearer assertions, and Entra's on-behalf-of flow as gateway-side config;
-Solo's enterprise build adds a full built-in STS. For stateless request/response
+7523 JWT-bearer assertions, and Entra's on-behalf-of flow — all three
+open-sourced in July 2026, so the OSS tier is more capable than "gateway-side
+config" suggests. Solo's enterprise build goes further still: a built-in STS with
+a token vault, delegation carrying a real `act` chain, impersonation,
+external-IdP delegation, and elicitation-based OAuth credential capture. The
+alternative this proposal must beat is that one, not a thinner strawman. For stateless request/response
 egress, a gateway is a perfectly good answer and this proposal does not claim
 otherwise.
 
@@ -376,27 +390,39 @@ kind: MCPServer
 metadata:
   name: expenses-tools
 spec:
-  transport: streamable_http
-  url: https://mcp.acme.example/mcp
-  auth:
-    clientCredentials:
-      tokenUrl: https://as.acme.example/oauth2/token
-      clientId: agent-service
-      clientSecret:
-        secretKeyRef: { name: agent-creds, key: secret }
-      scopes: ["expenses.read"]
+  endpoint:
+    streamableHTTP:
+      url: https://mcp.acme.example/mcp
+      auth:
+        secretStore: kubernetes
+        oauth2:
+          issuer: https://as.acme.example/oauth2/token
+          clientID: agent-service
+          secretKeyRef: { name: agent-creds, key: secret }
+          audience: https://mcp.acme.example/mcp
+          scopes: ["expenses.read"]
 ```
 
 After:
 
 ```yaml
-  auth:
-    onBehalfOf:
-      sts: corp-sts
-      audience: https://mcp.acme.example/mcp
-      scopes: ["expenses.read"]
-      # subject and actor chain come from the delegation context at call time
+  endpoint:
+    streamableHTTP:
+      url: https://mcp.acme.example/mcp
+      auth:
+        onBehalfOf:
+          sts: corp-sts
+          audience: https://mcp.acme.example/mcp
+          scopes: ["expenses.read"]
+          # subject and actor chain come from the delegation context at call time
 ```
+
+Note where this lands structurally. `MCPAuth` is already a union of `secretStore`,
+`oauth2`, and `spiffe`, so `onBehalfOf` is a **third variant of an existing
+union** rather than a new top-level `spec.auth` block. That is a materially
+smaller and more reviewable change than it first appears, and the CEL validation
+already enforcing exactly-one-transport establishes the pattern for enforcing
+exactly-one-auth-mode.
 
 What is absent matters as much as what is present. No client secret, because the
 sidecar's SVID is the client assertion. No subject, because identity is runtime
@@ -644,9 +670,19 @@ just a code-review convention.
 ## 8. Alternatives considered
 
 **Egress gateway only (agentgateway / Envoy / AI gateway).** Works today, and is
-the right answer for stateless egress. Cannot solve durable delegation across a
-multi-day workflow, cannot participate in workflow lifecycle on revocation, and
-adds a second data plane and a second identity system in the pod. This proposal is
+the right answer for stateless egress. Taken at its strongest — Solo's enterprise
+agentgateway — it already does delegation with a real `act` chain, which is the
+closest existing thing to this proposal's core value proposition, and any
+argument for building this in Dapr has to clear that bar rather than the OSS one.
+
+It clears it on exactly one axis, and the axis is duration. A gateway is
+stateless per request: it cannot know that a call is activity 47 of a workflow
+started on Tuesday, that the workflow slept three days awaiting approval, or that
+it is replaying. So it cannot mint a token from a grant whose subject token
+expired two days ago, because nothing in the gateway carried that grant across
+the gap — and it cannot participate in workflow lifecycle on revocation, because
+suspending a three-day workflow is not a request-scoped action. It also adds a
+second data plane and a second identity system in the pod. This proposal is
 complementary rather than competing: gateways remain the right place for ingress
 authN and tool-level scope enforcement.
 
@@ -873,7 +909,8 @@ or gateway is for."*
 The response is that Dapr already is, and has been for some time. Sentry is a
 certificate authority and, since 1.16, an OIDC issuer. Components perform federated
 identity exchange with Entra. As of 1.18, daprd injects SPIFFE JWT-SVIDs into
-outbound MCP tool calls. That line was crossed a year ago.
+outbound MCP tool calls when an `MCPServer` is configured with `auth.spiffe.jwt`.
+That line was crossed a year ago.
 
 The question actually on the table is not whether Dapr does identity. It is whether
 Dapr does **only the half that does not require knowing who the user is** — and
