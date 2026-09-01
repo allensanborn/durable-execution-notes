@@ -589,6 +589,34 @@ user's intent. `audienceAllowlist` plus component scoping bounds this. The resid
 risk is an operator configuring an over-broad allowlist, which is a documentation
 and defaults problem.
 
+### 7.2b Why encryption is not an alternative to non-persistence
+
+A reasonable reader will ask why the delegation context needs a non-persistence
+invariant at all, given that Dapr can already encrypt the workflow state store.
+The answer is that encryption and non-persistence solve different problems, and
+substituting one for the other produces a design that looks safe and is not.
+
+There are two distinct history-hygiene problems in any event-sourced engine.
+**Business payloads** are legitimately recorded and legitimately need to be
+readable later; for those, encryption with a controlled decode path is the
+correct answer, and the gaps in Dapr's current story there — granularity,
+pluggability, and the absence of a key-free decode path for tooling — are
+analyzed separately in [the Dapr Workflow / Temporal comparison in this
+repository](dapr-workflow-vs-temporal.md).
+
+**Credentials are not that case.** Replay hands back the recorded result of an
+activity, so a token written into history is stale by the time anything reads it
+— encrypting it yields a confidential stale credential rather than a readable
+one, which is no more correct. Worse, it is a bearer secret at rest with a
+lifetime governed by the workflow's retention policy rather than the token's
+`exp`. This is why §4.2 states the invariant as never-persist rather than
+persist-encrypted, and why §11.3 enforces it by scanning raw state store bytes:
+the property must be structural, not configurable.
+
+The two mechanisms are complements. A complete durable-execution security story
+needs a payload codec for the data and a delegation context for the authority,
+and neither substitutes for the other.
+
 ### 7.3 No token passthrough
 
 The runtime must never forward an inbound token to an upstream target. Every
