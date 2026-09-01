@@ -300,6 +300,51 @@ Waiting for a human is a thing workflow engines are already excellent at. Step-u
 
 There is no built-in path in Dapr as of 1.18. **Token acquisition and delegation are entirely application code, executed inside an activity.** Worth stating plainly, because a proposal without an honest baseline is a pitch.
 
+*Component view (C4 level 3) inside the agent application: where today's token handling actually lives, and what the runtime underneath it contributes.*
+
+```mermaid
+graph TB
+
+  subgraph diagram ["Component view: Agent application - where token handling lives today"]
+
+    28["Authorization server / STS<br/>[Software System]<br/>Keycloak 26.2+, ZITADEL,<br/>Auth0, Authlete. Issues the<br/>composite token carrying the<br/>act chain."]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["Microsoft Entra ID<br/>[Software System]<br/>Does not implement RFC 8693.<br/>On-behalf-of is RFC 7523 plus<br/>requested_token_use, no actor<br/>vocabulary."]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    35["Downstream API<br/>[Software System]<br/>Claims, payments and SaaS.<br/>Its own per-user<br/>authorization is what<br/>delegation makes work."]
+    style 35 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      subgraph 4 ["Agent application"]
+
+        5["Workflow orchestrator<br/>[Component: Dapr Workflow SDK]<br/>Deterministic and replayed:<br/>no I/O, no clock, no LLM.<br/>Holds grants, never a token."]
+        6["Activity worker<br/>[Component: Dapr Workflow SDK]<br/>The only place side effects<br/>live. Mints a token per use<br/>and returns the business<br/>result only."]
+        7["DurableAgent agent loop<br/>[Component: Dapr Agents]<br/>Memory tiers, tool calling,<br/>multi-agent orchestration.<br/>Implements no SPIFFE identity<br/>of its own."]
+        8["Hand-rolled exchange and token cache<br/>[Component: Application code]<br/>Per-IdP branching, per-worker<br/>cache, expiry tracked by<br/>hand. Rebuilt in every<br/>application."]
+      end
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+
+        10["Workflow engine<br/>[Component: Go, durabletask-go]<br/>durabletask-go orchestration<br/>hosted as actors. Writes the<br/>append-only history."]
+      end
+
+    end
+
+    5 -->|"Schedules activities and<br/>child workflows through<br/>[gRPC]"| 10
+    6 -->|"Obtains a downstream token<br/>from<br/>[in-process call]"| 8
+    7 -->|"Drives its tool-calling loop<br/>as<br/>[in-process call]"| 5
+    8 -->|"Performs a hand-rolled<br/>exchange against<br/>[RFC 8693 over HTTPS]"| 28
+    8 -->|"Branches to a second request<br/>shape for<br/>[RFC 7523 over HTTPS]"| 29
+    6 -->|"Calls, with the token it<br/>minted and never returns<br/>[HTTPS]"| 35
+
+  end
+```
+
+**Key.** Every element here ships; nothing on this diagram is proposed. The sequence below shows what happens in what order, this shows what the code is made of. The hand-rolled exchange component is the one you write, once per application and once per language, and it is the only element on the diagram that has two outbound arrows for what is nominally one operation.
+
+Generated from [`docs/architecture/workspace.dsl`](docs/architecture/workspace.dsl), which is the single source for every C4 view in this repository; regenerate with `tools/build-diagrams.sh`.
+
 ```mermaid
 sequenceDiagram
     autonumber

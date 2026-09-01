@@ -1,0 +1,37 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - proposed policy building block"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    1["<div style='font-weight: bold'>Human operator</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Triages one tenant's<br />exception queue. The<br />initiating principal whose<br />authority a run carries.</div>"]
+    style 1 fill:#ffffff,stroke:#444444,color:#444444
+
+    32["<div style='font-weight: bold'>Policy decision point</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>OPA, Cerbos or Cedar.<br />Stateless decision engines<br />holding per-tenant contract<br />policy data.</div>"]
+    style 32 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    33["<div style='font-weight: bold'>Relationship store</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>OpenFGA or SpiceDB.<br />Zanzibar-lineage stores<br />answering entitlement through<br />a Check API.</div>"]
+    style 33 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+      style 3 fill:#ffffff,stroke:#444444,color:#444444
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+        style 9 fill:#ffffff,stroke:#444444,color:#444444
+
+        10["<div style='font-weight: bold'>Workflow engine</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go, durabletask-go]</div><div style='font-size: 80%; margin-top:10px'>durabletask-go orchestration<br />hosted as actors. Writes the<br />append-only history.</div>"]
+        style 10 fill:#ffffff,stroke:#444444,color:#444444
+        19["<div style='font-weight: bold'>policy building block</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go, components-contrib]</div><div style='font-size: 80%; margin-top:10px'>PROPOSED. Abstracts the<br />question, check(principal,<br />action, resource, context,<br />grant), not the engine, and<br />not relationship writes.</div>"]
+        style 19 fill:#ffffff,stroke:#b3591a,color:#b3591a
+        20["<div style='font-weight: bold'>Before-activity enforcement hook</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go]</div><div style='font-size: 80%; margin-top:10px'>PROPOSED. Runs the free local<br />gates first, then the network<br />ones. Returns allow, deny or<br />escalate.</div>"]
+        style 20 fill:#ffffff,stroke:#b3591a,color:#b3591a
+      end
+
+    end
+
+    20-. "<div>PROPOSED. Asks the network<br />gates through</div><div style='font-size: 70%'>[component API]</div>" .->19
+    20-. "<div>PROPOSED. Suspends the run<br />and raises an approval<br />request to, on escalate</div><div style='font-size: 70%'>[external event]</div>" .->1
+    19-. "<div>PROPOSED. Asks entitlement of</div><div style='font-size: 70%'>[Check API over gRPC]</div>" .->33
+    19-. "<div>PROPOSED. Asks per-tenant<br />contract policy of</div><div style='font-size: 70%'>[decision API over HTTP]</div>" .->32
+    10-. "<div>PROPOSED. Calls before every<br />activity, with the typed<br />action and the grant</div><div style='font-size: 70%'>[in-process call]</div>" .->20
+
+  end

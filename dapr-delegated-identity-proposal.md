@@ -231,6 +231,58 @@ evaporated, because that is a workflow lifecycle event.
 
 ## 4. Design
 
+*Container view (C4 level 2) of a Dapr agent platform: which container holds a credential today, which one would hold it under this proposal, and what the state store sees.*
+
+```mermaid
+graph TB
+
+  subgraph diagram ["Container view: Dapr-based agent platform"]
+
+    1["Human operator<br/>[Person]<br/>Triages one tenant's<br/>exception queue. The<br/>initiating principal whose<br/>authority a run carries."]
+    2["Platform operator<br/>[Person]<br/>Has to render workflow<br/>history to answer a question,<br/>without holding a tenant's<br/>keys."]
+    22["Dapr Sentry<br/>[Software System]<br/>CA and, since 1.16, an OIDC<br/>issuer. Issues X.509 and<br/>JWT-SVIDs bound to a<br/>per-app-id SPIFFE ID."]
+    style 22 fill:#6b7f9e,stroke:#4a586e,color:#ffffff
+    28["Authorization server / STS<br/>[Software System]<br/>Keycloak 26.2+, ZITADEL,<br/>Auth0, Authlete. Issues the<br/>composite token carrying the<br/>act chain."]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["Microsoft Entra ID<br/>[Software System]<br/>Does not implement RFC 8693.<br/>On-behalf-of is RFC 7523 plus<br/>requested_token_use, no actor<br/>vocabulary."]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    34["MCP server<br/>[Software System]<br/>Tool surface. Its<br/>specification forbids<br/>transiting tokens not issued<br/>for it."]
+    style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    35["Downstream API<br/>[Software System]<br/>Claims, payments and SaaS.<br/>Its own per-user<br/>authorization is what<br/>delegation makes work."]
+    style 35 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    36["Model provider<br/>[Software System]<br/>Everything it returns to an<br/>activity is untrusted<br/>content."]
+    style 36 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      21[("State store<br/>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]<br/>Workflow history, actor state<br/>and application state all<br/>land here.")]
+      4["Agent application<br/>[Container: Python or .NET, Dapr Agents]<br/>Orchestrator, activity<br/>workers and agent loop. Every<br/>token today is handled by<br/>code in here."]
+      9["Dapr sidecar (daprd)<br/>[Container: Go]<br/>Workflow engine, actors,<br/>state and MCP clients. Holds<br/>the workload SVID; the app<br/>cannot ask for one."]
+    end
+
+    9 -.->|"PROPOSED. Suspends the run<br/>and raises an approval<br/>request to, on escalate<br/>[external event]"| 1
+    1 -->|"Starts and triages agent runs<br/>in<br/>[HTTPS]"| 4
+    2 -->|"Reads workflow history<br/>through, in the clear<br/>[HTTP]"| 9
+    4 -->|"Schedules workflows and<br/>activities through<br/>[gRPC over localhost]"| 9
+    4 -->|"Performs a hand-rolled<br/>exchange against<br/>[RFC 8693 over HTTPS]"| 28
+    4 -->|"Branches to a second request<br/>shape for<br/>[RFC 7523 over HTTPS]"| 29
+    4 -->|"Calls, with the token it<br/>minted and never returns<br/>[HTTPS]"| 35
+    4 -->|"Calls models from inside an<br/>activity<br/>[HTTPS]"| 36
+    9 -->|"Writes history to, in the<br/>clear<br/>[Multi and Get, no encryption]"| 21
+    9 -->|"Invokes tools on, attaching<br/>an app-identity credential<br/>when configured<br/>[JSON-RPC over HTTPS]"| 34
+    9 -->|"Invokes HTTPEndpoints and<br/>HTTP bindings on<br/>[HTTPS]"| 35
+    9 -->|"Fetches its X.509 and<br/>JWT-SVIDs from<br/>[gRPC over mTLS]"| 22
+    29 -->|"Validates runtime-issued<br/>JWT-SVIDs against, as a<br/>relying party<br/>[OIDC discovery and JWKS]"| 22
+    9 -.->|"PROPOSED. Exchanges a grant<br/>for a downstream token with,<br/>authenticating as the<br/>sidecar's SVID<br/>[RFC 8693 over HTTPS]"| 28
+    9 -.->|"PROPOSED. Speaks the<br/>on-behalf-of dialect to,<br/>which is why the abstraction<br/>exists<br/>[RFC 7523 over HTTPS]"| 29
+
+  end
+```
+
+**Key.** Solid borders and solid arrows are 1.18 behaviour. Dotted arrows labelled **PROPOSED** are what this proposal adds; they are drawn from the sidecar because that is where the new work lands, and §4.4 opens the sidecar up to show it. The proposal's central claim is visible as an absence: no arrow carrying a token runs into the state store.
+
+Generated from [`docs/architecture/workspace.dsl`](docs/architecture/workspace.dsl), which is the single source for every C4 view in this repository; regenerate with `tools/build-diagrams.sh`.
+
 ### 4.1 Layer 1 — the `sts` component
 
 A new component type. Directory: `components-contrib/sts/`.
@@ -520,6 +572,56 @@ When an activity invokes any `onBehalfOf` consumer, inside daprd:
 8. Inject the token into the outbound request; forward.
 
 The application observes none of this.
+
+*Component view (C4 level 3) inside the sidecar of the **proposed** resolution path: which components a call passes through between an `onBehalfOf` consumer and an injected token?*
+
+```mermaid
+graph TB
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - proposed delegated-identity resolution"]
+
+    28["Authorization server / STS<br/>[Software System]<br/>Keycloak 26.2+, ZITADEL,<br/>Auth0, Authlete. Issues the<br/>composite token carrying the<br/>act chain."]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["Microsoft Entra ID<br/>[Software System]<br/>Does not implement RFC 8693.<br/>On-behalf-of is RFC 7523 plus<br/>requested_token_use, no actor<br/>vocabulary."]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    34["MCP server<br/>[Software System]<br/>Tool surface. Its<br/>specification forbids<br/>transiting tokens not issued<br/>for it."]
+    style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+
+        10["Workflow engine<br/>[Component: Go, durabletask-go]<br/>durabletask-go orchestration<br/>hosted as actors. Writes the<br/>append-only history."]
+        14["MCP client and auth round-tripper<br/>[Component: Go]<br/>Invokes tools for an<br/>MCPServer resource and<br/>attaches an app-identity<br/>credential when configured."]
+        15["Delegation context<br/>[Component: Go]<br/>PROPOSED. Non-secret subject,<br/>grant reference, scopes and<br/>act chain, carried like trace<br/>context. The subject token is<br/>never persisted."]
+        style 15 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+        16["onBehalfOf resolver<br/>[Component: Go]<br/>PROPOSED. At call time: read<br/>the context, intersect<br/>scopes, check the audience<br/>allowlist, mint, inject."]
+        style 16 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+        17["Token cache<br/>[Component: Go]<br/>PROPOSED. Per-sidecar, in<br/>memory only, singleflight,<br/>TTL capped below token<br/>expiry."]
+        style 17 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+        18["sts component<br/>[Component: Go, components-contrib]<br/>PROPOSED. Pluggable RFC 8693<br/>client authenticating as the<br/>sidecar's own JWT-SVID. No<br/>static client secret."]
+        style 18 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+      end
+
+      21[("State store<br/>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]<br/>Workflow history, actor state<br/>and application state all<br/>land here.")]
+    end
+
+    14 -->|"Invokes tools on, attaching<br/>an app-identity credential<br/>when configured<br/>[JSON-RPC over HTTPS]"| 34
+    10 -.->|"PROPOSED. Establishes and<br/>propagates, to activities and<br/>child workflows<br/>[in-process call]"| 15
+    15 -.->|"PROPOSED. Persists everything<br/>except the subject token with<br/>the instance<br/>[actor state]"| 21
+    14 -.->|"PROPOSED. Resolves an<br/>onBehalfOf auth mode through<br/>[in-process call]"| 16
+    16 -.->|"PROPOSED. Reads the subject,<br/>grant reference and act chain<br/>from<br/>[in-process call]"| 15
+    16 -.->|"PROPOSED. Checks and fills,<br/>keyed on subject, audience,<br/>effective scopes and act<br/>chain<br/>[in-process call]"| 17
+    16 -.->|"PROPOSED. Requests an<br/>exchange from, on a cache<br/>miss<br/>[component API]"| 18
+    18 -.->|"PROPOSED. Exchanges a grant<br/>for a downstream token with,<br/>authenticating as the<br/>sidecar's SVID<br/>[RFC 8693 over HTTPS]"| 28
+    18 -.->|"PROPOSED. Speaks the<br/>on-behalf-of dialect to,<br/>which is why the abstraction<br/>exists<br/>[RFC 7523 over HTTPS]"| 29
+
+  end
+```
+
+**Key.** Dashed orange borders and descriptions beginning **PROPOSED** mark components that do not exist; the MCP client and the workflow engine are the two shipping components they attach to. The delegation context is the only proposed element with an arrow into the state store, and its label carries the invariant: everything except the subject token.
+
+Generated from [`docs/architecture/workspace.dsl`](docs/architecture/workspace.dsl), which is the single source for every C4 view in this repository; regenerate with `tools/build-diagrams.sh`.
 
 ### 4.5 Token cache
 

@@ -1,0 +1,48 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - proposed delegated-identity resolution"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    28["<div style='font-weight: bold'>Authorization server / STS</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Keycloak 26.2+, ZITADEL,<br />Auth0, Authlete. Issues the<br />composite token carrying the<br />act chain.</div>"]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["<div style='font-weight: bold'>Microsoft Entra ID</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Does not implement RFC 8693.<br />On-behalf-of is RFC 7523 plus<br />requested_token_use, no actor<br />vocabulary.</div>"]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    34["<div style='font-weight: bold'>MCP server</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Tool surface. Its<br />specification forbids<br />transiting tokens not issued<br />for it.</div>"]
+    style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+      style 3 fill:#ffffff,stroke:#444444,color:#444444
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+        style 9 fill:#ffffff,stroke:#444444,color:#444444
+
+        10["<div style='font-weight: bold'>Workflow engine</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go, durabletask-go]</div><div style='font-size: 80%; margin-top:10px'>durabletask-go orchestration<br />hosted as actors. Writes the<br />append-only history.</div>"]
+        style 10 fill:#ffffff,stroke:#444444,color:#444444
+        14["<div style='font-weight: bold'>MCP client and auth round-tripper</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go]</div><div style='font-size: 80%; margin-top:10px'>Invokes tools for an<br />MCPServer resource and<br />attaches an app-identity<br />credential when configured.</div>"]
+        style 14 fill:#ffffff,stroke:#444444,color:#444444
+        15["<div style='font-weight: bold'>Delegation context</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go]</div><div style='font-size: 80%; margin-top:10px'>PROPOSED. Non-secret subject,<br />grant reference, scopes and<br />act chain, carried like trace<br />context. The subject token is<br />never persisted.</div>"]
+        style 15 fill:#ffffff,stroke:#b3591a,color:#b3591a
+        16["<div style='font-weight: bold'>onBehalfOf resolver</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go]</div><div style='font-size: 80%; margin-top:10px'>PROPOSED. At call time: read<br />the context, intersect<br />scopes, check the audience<br />allowlist, mint, inject.</div>"]
+        style 16 fill:#ffffff,stroke:#b3591a,color:#b3591a
+        17["<div style='font-weight: bold'>Token cache</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go]</div><div style='font-size: 80%; margin-top:10px'>PROPOSED. Per-sidecar, in<br />memory only, singleflight,<br />TTL capped below token<br />expiry.</div>"]
+        style 17 fill:#ffffff,stroke:#b3591a,color:#b3591a
+        18["<div style='font-weight: bold'>sts component</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go, components-contrib]</div><div style='font-size: 80%; margin-top:10px'>PROPOSED. Pluggable RFC 8693<br />client authenticating as the<br />sidecar's own JWT-SVID. No<br />static client secret.</div>"]
+        style 18 fill:#ffffff,stroke:#b3591a,color:#b3591a
+      end
+
+      21[("<div style='font-weight: bold'>State store</div><div style='font-size: 70%; margin-top: 0px'>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]</div><div style='font-size: 80%; margin-top:10px'>Workflow history, actor state<br />and application state all<br />land here.</div>")]
+      style 21 fill:#ffffff,stroke:#444444,color:#444444
+    end
+
+    14-. "<div>Invokes tools on, attaching<br />an app-identity credential<br />when configured</div><div style='font-size: 70%'>[JSON-RPC over HTTPS]</div>" .->34
+    10-. "<div>PROPOSED. Establishes and<br />propagates, to activities and<br />child workflows</div><div style='font-size: 70%'>[in-process call]</div>" .->15
+    15-. "<div>PROPOSED. Persists everything<br />except the subject token with<br />the instance</div><div style='font-size: 70%'>[actor state]</div>" .->21
+    14-. "<div>PROPOSED. Resolves an<br />onBehalfOf auth mode through</div><div style='font-size: 70%'>[in-process call]</div>" .->16
+    16-. "<div>PROPOSED. Reads the subject,<br />grant reference and act chain<br />from</div><div style='font-size: 70%'>[in-process call]</div>" .->15
+    16-. "<div>PROPOSED. Checks and fills,<br />keyed on subject, audience,<br />effective scopes and act<br />chain</div><div style='font-size: 70%'>[in-process call]</div>" .->17
+    16-. "<div>PROPOSED. Requests an<br />exchange from, on a cache<br />miss</div><div style='font-size: 70%'>[component API]</div>" .->18
+    18-. "<div>PROPOSED. Exchanges a grant<br />for a downstream token with,<br />authenticating as the<br />sidecar's SVID</div><div style='font-size: 70%'>[RFC 8693 over HTTPS]</div>" .->28
+    18-. "<div>PROPOSED. Speaks the<br />on-behalf-of dialect to,<br />which is why the abstraction<br />exists</div><div style='font-size: 70%'>[RFC 7523 over HTTPS]</div>" .->29
+
+  end

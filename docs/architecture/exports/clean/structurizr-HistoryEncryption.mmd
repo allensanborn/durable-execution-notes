@@ -1,0 +1,29 @@
+graph TB
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - the state encryption boundary"]
+
+    2["Platform operator<br/>[Person]<br/>Has to render workflow<br/>history to answer a question,<br/>without holding a tenant's<br/>keys."]
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+
+        10["Workflow engine<br/>[Component: Go, durabletask-go]<br/>durabletask-go orchestration<br/>hosted as actors. Writes the<br/>append-only history."]
+        11["Actor state path<br/>[Component: Go]<br/>pkg/actors/state. Calls the<br/>store's Multi and Get<br/>directly and never imports<br/>pkg/encryption."]
+        12["State building block API<br/>[Component: Go]<br/>The /v1.0/state HTTP and gRPC<br/>handlers. The only caller of<br/>the encryption helper."]
+        13["State encryption helper<br/>[Component: Go, pkg/encryption]<br/>AES-GCM with keys from a<br/>secret store. Wraps values at<br/>the state API, not at the<br/>store object."]
+      end
+
+      21[("State store<br/>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]<br/>Workflow history, actor state<br/>and application state all<br/>land here.")]
+      4["Agent application<br/>[Container: Python or .NET, Dapr Agents]<br/>Orchestrator, activity<br/>workers and agent loop. Every<br/>token today is handled by<br/>code in here."]
+    end
+
+    2 -->|"Reads workflow history<br/>through, in the clear<br/>[HTTP]"| 10
+    4 -->|"Schedules activities and<br/>child workflows through<br/>[gRPC]"| 10
+    10 -->|"Persists history through<br/>[in-process call]"| 11
+    11 -->|"Writes history to, in the<br/>clear<br/>[Multi and Get, no encryption]"| 21
+    4 -->|"Writes application state<br/>through<br/>[HTTP or gRPC]"| 12
+    12 -->|"Wraps every value through<br/>[TryEncryptValue and TryDecryptValue]"| 13
+    13 -->|"Writes AES-GCM ciphertext to<br/>[state component API]"| 21
+
+  end

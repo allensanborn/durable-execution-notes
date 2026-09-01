@@ -1,0 +1,21 @@
+graph TB
+
+  subgraph diagram ["Container view: Temporal - the payload codec path"]
+
+    2["Platform operator<br/>[Person]<br/>Has to render workflow<br/>history to answer a question,<br/>without holding a tenant's<br/>keys."]
+
+    subgraph 23 ["Temporal"]
+      style 23 stroke:#4a586e,color:#4a586e
+
+      24["Worker<br/>[Container: Temporal SDK plus your codec]<br/>Runs workflow and activity<br/>code. Its Data Converter and<br/>Payload Codec encrypt<br/>payloads in-process."]
+      25["Temporal service<br/>[Container: Temporal Server]<br/>Persists the event history.<br/>Stores ciphertext and never<br/>holds your keys."]
+      26["Codec server<br/>[Container: Your service]<br/>You run it. /encode, /decode,<br/>/download. The platform gets<br/>a decode service, not a key."]
+      27["Web UI and CLI<br/>[Container: Temporal Web, Temporal CLI]<br/>Cannot decrypt anything<br/>itself. Round-trips payloads<br/>through your codec server."]
+    end
+
+    2 -->|"Inspects workflow history<br/>through<br/>[HTTPS]"| 27
+    24 -->|"Persists codec-encrypted<br/>history to<br/>[gRPC]"| 25
+    27 -->|"Reads raw event history from<br/>[gRPC and HTTP]"| 25
+    27 -->|"Decodes payloads for display<br/>through<br/>[HTTP /decode]"| 26
+
+  end

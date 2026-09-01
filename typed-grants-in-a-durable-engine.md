@@ -86,6 +86,46 @@ A single building block spanning both is the classic lowest-common-denominator t
 - **Do not abstract the writes.** Tuple management is OpenFGA's native model and the exact analogue of Redis `INCR` in the state-store argument: the moment you need the engine's own model, take the direct dependency and own it. An abstraction over tuple writes is where this one stops paying.
 - **Precedent already exists in-tree.** Dapr ships OPA as HTTP middleware and performs per-tool MCP authorization through OPA. What is missing is a component *interface* with several implementations rather than one hard-wired engine.
 
+*Component view (C4 level 3) of the **proposed** policy building block: what the engine ships generically, and where the two policy paradigms attach to it.*
+
+```mermaid
+graph TB
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - proposed policy building block"]
+
+    1["Human operator<br/>[Person]<br/>Triages one tenant's<br/>exception queue. The<br/>initiating principal whose<br/>authority a run carries."]
+
+    32["Policy decision point<br/>[Software System]<br/>OPA, Cerbos or Cedar.<br/>Stateless decision engines<br/>holding per-tenant contract<br/>policy data."]
+    style 32 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    33["Relationship store<br/>[Software System]<br/>OpenFGA or SpiceDB.<br/>Zanzibar-lineage stores<br/>answering entitlement through<br/>a Check API."]
+    style 33 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+
+        10["Workflow engine<br/>[Component: Go, durabletask-go]<br/>durabletask-go orchestration<br/>hosted as actors. Writes the<br/>append-only history."]
+        19["policy building block<br/>[Component: Go, components-contrib]<br/>PROPOSED. Abstracts the<br/>question, check(principal,<br/>action, resource, context,<br/>grant), not the engine, and<br/>not relationship writes."]
+        style 19 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+        20["Before-activity enforcement hook<br/>[Component: Go]<br/>PROPOSED. Runs the free local<br/>gates first, then the network<br/>ones. Returns allow, deny or<br/>escalate."]
+        style 20 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+      end
+
+    end
+
+    20 -.->|"PROPOSED. Asks the network<br/>gates through<br/>[component API]"| 19
+    20 -.->|"PROPOSED. Suspends the run<br/>and raises an approval<br/>request to, on escalate<br/>[external event]"| 1
+    19 -.->|"PROPOSED. Asks entitlement of<br/>[Check API over gRPC]"| 33
+    19 -.->|"PROPOSED. Asks per-tenant<br/>contract policy of<br/>[decision API over HTTP]"| 32
+    10 -.->|"PROPOSED. Calls before every<br/>activity, with the typed<br/>action and the grant<br/>[in-process call]"| 20
+
+  end
+```
+
+**Key.** Dashed orange borders and descriptions beginning **PROPOSED** mark components that do not exist. The two grey systems are the two paradigms the interface has to span, and they are separate boxes on purpose: one is a stateless decision engine, the other a relationship store whose writes this interface deliberately does not abstract. The escalate arrow to the human operator is the third outcome a request-scoped layer cannot offer.
+
+Generated from [`docs/architecture/workspace.dsl`](docs/architecture/workspace.dsl), which is the single source for every C4 view in this repository; regenerate with `tools/build-diagrams.sh`.
+
 The payoff is the usual one: the application declares that it needs a decision, and *which* PDP answers becomes a platform concern, so swapping Cerbos for OpenFGA is a YAML change instead of a rewrite.
 
 ## Why enforcement is packageable here but not in a generic resource server

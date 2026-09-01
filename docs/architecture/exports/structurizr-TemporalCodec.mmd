@@ -1,0 +1,28 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["Container view: Temporal - the payload codec path"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    2["<div style='font-weight: bold'>Platform operator</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Has to render workflow<br />history to answer a question,<br />without holding a tenant's<br />keys.</div>"]
+    style 2 fill:#ffffff,stroke:#444444,color:#444444
+
+    subgraph 23 ["Temporal"]
+      style 23 fill:#ffffff,stroke:#4a586e,color:#4a586e
+
+      24["<div style='font-weight: bold'>Worker</div><div style='font-size: 70%; margin-top: 0px'>[Container: Temporal SDK plus your codec]</div><div style='font-size: 80%; margin-top:10px'>Runs workflow and activity<br />code. Its Data Converter and<br />Payload Codec encrypt<br />payloads in-process.</div>"]
+      style 24 fill:#ffffff,stroke:#444444,color:#444444
+      25["<div style='font-weight: bold'>Temporal service</div><div style='font-size: 70%; margin-top: 0px'>[Container: Temporal Server]</div><div style='font-size: 80%; margin-top:10px'>Persists the event history.<br />Stores ciphertext and never<br />holds your keys.</div>"]
+      style 25 fill:#ffffff,stroke:#444444,color:#444444
+      26["<div style='font-weight: bold'>Codec server</div><div style='font-size: 70%; margin-top: 0px'>[Container: Your service]</div><div style='font-size: 80%; margin-top:10px'>You run it. /encode, /decode,<br />/download. The platform gets<br />a decode service, not a key.</div>"]
+      style 26 fill:#ffffff,stroke:#444444,color:#444444
+      27["<div style='font-weight: bold'>Web UI and CLI</div><div style='font-size: 70%; margin-top: 0px'>[Container: Temporal Web, Temporal CLI]</div><div style='font-size: 80%; margin-top:10px'>Cannot decrypt anything<br />itself. Round-trips payloads<br />through your codec server.</div>"]
+      style 27 fill:#ffffff,stroke:#444444,color:#444444
+    end
+
+    2-. "<div>Inspects workflow history<br />through</div><div style='font-size: 70%'>[HTTPS]</div>" .->27
+    24-. "<div>Persists codec-encrypted<br />history to</div><div style='font-size: 70%'>[gRPC]</div>" .->25
+    27-. "<div>Reads raw event history from</div><div style='font-size: 70%'>[gRPC and HTTP]</div>" .->25
+    27-. "<div>Decodes payloads for display<br />through</div><div style='font-size: 70%'>[HTTP /decode]</div>" .->26
+
+  end

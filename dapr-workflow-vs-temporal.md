@@ -60,11 +60,79 @@ An event-sourced engine persists activity inputs and outputs. That makes anythin
 
 **Temporal's model** is a client-side Data Converter with a pluggable Payload Codec ([Data encryption](https://docs.temporal.io/production-deployment/data-encryption)). Data is plaintext only inside the client and worker processes you operate; the server stores ciphertext and never holds keys. On top of that sits the **Codec Server** — an HTTP service you run exposing `/decode`, `/encode`, and `/download`. The Web UI and CLI cannot decrypt anything themselves, so they call your codec server to render event history. The platform gets a decode service rather than a key, and every decode is an auditable request against infrastructure you control.
 
+*Container view (C4 level 2) of Temporal: which container ever sees a plaintext payload, and how does tooling render history without holding a key?*
+
+```mermaid
+graph TB
+
+  subgraph diagram ["Container view: Temporal - the payload codec path"]
+
+    2["Platform operator<br/>[Person]<br/>Has to render workflow<br/>history to answer a question,<br/>without holding a tenant's<br/>keys."]
+
+    subgraph 23 ["Temporal"]
+      style 23 stroke:#4a586e,color:#4a586e
+
+      24["Worker<br/>[Container: Temporal SDK plus your codec]<br/>Runs workflow and activity<br/>code. Its Data Converter and<br/>Payload Codec encrypt<br/>payloads in-process."]
+      25["Temporal service<br/>[Container: Temporal Server]<br/>Persists the event history.<br/>Stores ciphertext and never<br/>holds your keys."]
+      26["Codec server<br/>[Container: Your service]<br/>You run it. /encode, /decode,<br/>/download. The platform gets<br/>a decode service, not a key."]
+      27["Web UI and CLI<br/>[Container: Temporal Web, Temporal CLI]<br/>Cannot decrypt anything<br/>itself. Round-trips payloads<br/>through your codec server."]
+    end
+
+    2 -->|"Inspects workflow history<br/>through<br/>[HTTPS]"| 27
+    24 -->|"Persists codec-encrypted<br/>history to<br/>[gRPC]"| 25
+    27 -->|"Reads raw event history from<br/>[gRPC and HTTP]"| 25
+    27 -->|"Decodes payloads for display<br/>through<br/>[HTTP /decode]"| 26
+
+  end
+```
+
+**Key.** Every element here ships. The Codec server is the container you write and run; the Temporal service holds only ciphertext, and the Web UI and CLI hold nothing at all.
+
+Generated from [`docs/architecture/workspace.dsl`](docs/architecture/workspace.dsl), which is the single source for every C4 view in this repository; regenerate with `tools/build-diagrams.sh`.
+
 Temporal's own stated caveats, from the same page: added UI latency from round-tripping payloads, oversized payloads needing external storage, CORS configuration for the Web UI, access control on the codec server being yours to get right, and — the important one — "failure messages and call stacks are not encoded as codec-capable Payloads by default; you must explicitly enable encoding these common attributes on failures."
 
 **Dapr has the pieces, but not on this path.** It offers automatic client-side state-store encryption: AES-GCM with 128/192/256-bit keys, performed by the sidecar before data leaves the process, with keys always fetched from a secret store rather than sitting in component metadata, and primary/secondary keys for rotation ([`pkg/encryption/state.go:44-55`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/encryption/state.go#L44-L55) and [`pkg/encryption/encryption.go`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/encryption/encryption.go#L186-L203); [How-to: encrypt application state](https://docs.dapr.io/developing-applications/building-blocks/state-management/howto-encrypt-state/)). The `secretKeyRef.name` is appended to the stored **value**, after a `||` separator, so Dapr knows which key encrypted which item — the code builds `b64(enc) + "||" + keys.Primary.Name` and its own comment says it "will append the name of the key to the value for later extraction." (Dapr's own documentation says the key name is appended to the state key; the implementation in [`pkg/encryption/state.go`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/encryption/state.go) appends it to the value. The code is authoritative. One undocumented consequence: the key material is `hex.DecodeString`d, so it must be hex-encoded.)
 
 **That encryption does not cover workflow history.** Dapr Workflow persists through the actor state store ([Workflow architecture](https://docs.dapr.io/developing-applications/building-blocks/workflow/workflow-architecture/); traced to `astate.TransactionalStateOperation` in [`pkg/runtime/wfengine/backends/actors/actors.go:1266`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/runtime/wfengine/backends/actors/actors.go#L1266)), and it is tempting to conclude — as an earlier draft of this document did — that enabling encryption on that store therefore protects history. It does not. Dapr's automatic encryption is applied at the state building block's public API: the `/v1.0/state` HTTP and gRPC handlers call `TryEncryptValue` / `TryDecryptValue` around the component ([`pkg/api/http/http.go`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/api/http/http.go), [`pkg/api/grpc/grpc.go`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/api/grpc/grpc.go)). Workflow history is written on the actor path ([`pkg/actors/state/state.go:248`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/actors/state/state.go#L248)), which calls the component's `Multi`/`Get` directly and does not import `pkg/encryption` at all. The component object itself is never wrapped — [`pkg/runtime/processor/state/state.go`](https://github.com/dapr/dapr/blob/v1.18.3/pkg/runtime/processor/state/state.go) creates the store at line 84, records the keys in a name-keyed side table via `encryption.AddEncryptedStateStore` at line 105, and hands *that same unmodified store* to `AddStateStoreActor` at line 140 and `AddStateStore` at line 158; [`pkg/runtime/compstore/statestore.go`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/runtime/compstore/statestore.go#L30-L48) likewise just files the raw `state.Store` into a map, and `actorStateStore: true` is not special-cased. A full census of callers of `TryEncryptValue`/`TryDecryptValue` across `dapr/dapr` returns nine sites, all in the state API; there are zero occurrences of `encrypt` anywhere under `pkg/actors/` or `pkg/runtime/wfengine/`. Verified identical at tag `v1.18.3` and on master.
+
+*Component view (C4 level 3) inside the Dapr sidecar: which write path the encryption helper is actually on, and which path workflow history takes instead.*
+
+```mermaid
+graph TB
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - the state encryption boundary"]
+
+    2["Platform operator<br/>[Person]<br/>Has to render workflow<br/>history to answer a question,<br/>without holding a tenant's<br/>keys."]
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+
+        10["Workflow engine<br/>[Component: Go, durabletask-go]<br/>durabletask-go orchestration<br/>hosted as actors. Writes the<br/>append-only history."]
+        11["Actor state path<br/>[Component: Go]<br/>pkg/actors/state. Calls the<br/>store's Multi and Get<br/>directly and never imports<br/>pkg/encryption."]
+        12["State building block API<br/>[Component: Go]<br/>The /v1.0/state HTTP and gRPC<br/>handlers. The only caller of<br/>the encryption helper."]
+        13["State encryption helper<br/>[Component: Go, pkg/encryption]<br/>AES-GCM with keys from a<br/>secret store. Wraps values at<br/>the state API, not at the<br/>store object."]
+      end
+
+      21[("State store<br/>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]<br/>Workflow history, actor state<br/>and application state all<br/>land here.")]
+      4["Agent application<br/>[Container: Python or .NET, Dapr Agents]<br/>Orchestrator, activity<br/>workers and agent loop. Every<br/>token today is handled by<br/>code in here."]
+    end
+
+    2 -->|"Reads workflow history<br/>through, in the clear<br/>[HTTP]"| 10
+    4 -->|"Schedules activities and<br/>child workflows through<br/>[gRPC]"| 10
+    10 -->|"Persists history through<br/>[in-process call]"| 11
+    11 -->|"Writes history to, in the<br/>clear<br/>[Multi and Get, no encryption]"| 21
+    4 -->|"Writes application state<br/>through<br/>[HTTP or gRPC]"| 12
+    12 -->|"Wraps every value through<br/>[TryEncryptValue and TryDecryptValue]"| 13
+    13 -->|"Writes AES-GCM ciphertext to<br/>[state component API]"| 21
+
+  end
+```
+
+**Key.** Every element here ships; the diagram asserts no proposed mechanism. The two paths reach the same store component, and only one of them passes through the encryption helper. This is the corrected version of a claim an earlier draft of this document got backwards.
+
+Generated from [`docs/architecture/workspace.dsl`](docs/architecture/workspace.dsl), which is the single source for every C4 view in this repository; regenerate with `tools/build-diagrams.sh`.
 
 So application state your activities write through the state API **is** encrypted, while the workflow history recording those same activities' inputs and outputs is written in the clear. The only confidentiality available for history today is whatever the backing database provides at rest — Redis or Postgres disk encryption, CosmosDB or DynamoDB service-side keys — which is real protection against stolen media but hands the keys to the infrastructure operator, precisely the party a payload codec exists to exclude. No `components-contrib` state store implements encryption of its own either, as far as an absence search can establish: no non-test `.go` file under `components-contrib/state/` contains the string `encrypt`. That is an absence search rather than a proof, and it would not catch encryption applied by a store's own upstream client library configured through ordinary component metadata.
 

@@ -1,0 +1,51 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["Container view: Dapr-based agent platform"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    1["<div style='font-weight: bold'>Human operator</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Triages one tenant's<br />exception queue. The<br />initiating principal whose<br />authority a run carries.</div>"]
+    style 1 fill:#ffffff,stroke:#444444,color:#444444
+    2["<div style='font-weight: bold'>Platform operator</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Has to render workflow<br />history to answer a question,<br />without holding a tenant's<br />keys.</div>"]
+    style 2 fill:#ffffff,stroke:#444444,color:#444444
+    22["<div style='font-weight: bold'>Dapr Sentry</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>CA and, since 1.16, an OIDC<br />issuer. Issues X.509 and<br />JWT-SVIDs bound to a<br />per-app-id SPIFFE ID.</div>"]
+    style 22 fill:#6b7f9e,stroke:#4a586e,color:#ffffff
+    28["<div style='font-weight: bold'>Authorization server / STS</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Keycloak 26.2+, ZITADEL,<br />Auth0, Authlete. Issues the<br />composite token carrying the<br />act chain.</div>"]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["<div style='font-weight: bold'>Microsoft Entra ID</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Does not implement RFC 8693.<br />On-behalf-of is RFC 7523 plus<br />requested_token_use, no actor<br />vocabulary.</div>"]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    34["<div style='font-weight: bold'>MCP server</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Tool surface. Its<br />specification forbids<br />transiting tokens not issued<br />for it.</div>"]
+    style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    35["<div style='font-weight: bold'>Downstream API</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Claims, payments and SaaS.<br />Its own per-user<br />authorization is what<br />delegation makes work.</div>"]
+    style 35 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    36["<div style='font-weight: bold'>Model provider</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Everything it returns to an<br />activity is untrusted<br />content.</div>"]
+    style 36 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+      style 3 fill:#ffffff,stroke:#444444,color:#444444
+
+      21[("<div style='font-weight: bold'>State store</div><div style='font-size: 70%; margin-top: 0px'>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]</div><div style='font-size: 80%; margin-top:10px'>Workflow history, actor state<br />and application state all<br />land here.</div>")]
+      style 21 fill:#ffffff,stroke:#444444,color:#444444
+      4["<div style='font-weight: bold'>Agent application</div><div style='font-size: 70%; margin-top: 0px'>[Container: Python or .NET, Dapr Agents]</div><div style='font-size: 80%; margin-top:10px'>Orchestrator, activity<br />workers and agent loop. Every<br />token today is handled by<br />code in here.</div>"]
+      style 4 fill:#ffffff,stroke:#444444,color:#444444
+      9["<div style='font-weight: bold'>Dapr sidecar (daprd)</div><div style='font-size: 70%; margin-top: 0px'>[Container: Go]</div><div style='font-size: 80%; margin-top:10px'>Workflow engine, actors,<br />state and MCP clients. Holds<br />the workload SVID; the app<br />cannot ask for one.</div>"]
+      style 9 fill:#ffffff,stroke:#444444,color:#444444
+    end
+
+    9-. "<div>PROPOSED. Suspends the run<br />and raises an approval<br />request to, on escalate</div><div style='font-size: 70%'>[external event]</div>" .->1
+    1-. "<div>Starts and triages agent runs<br />in</div><div style='font-size: 70%'>[HTTPS]</div>" .->4
+    2-. "<div>Reads workflow history<br />through, in the clear</div><div style='font-size: 70%'>[HTTP]</div>" .->9
+    4-. "<div>Schedules workflows and<br />activities through</div><div style='font-size: 70%'>[gRPC over localhost]</div>" .->9
+    4-. "<div>Performs a hand-rolled<br />exchange against</div><div style='font-size: 70%'>[RFC 8693 over HTTPS]</div>" .->28
+    4-. "<div>Branches to a second request<br />shape for</div><div style='font-size: 70%'>[RFC 7523 over HTTPS]</div>" .->29
+    4-. "<div>Calls, with the token it<br />minted and never returns</div><div style='font-size: 70%'>[HTTPS]</div>" .->35
+    4-. "<div>Calls models from inside an<br />activity</div><div style='font-size: 70%'>[HTTPS]</div>" .->36
+    9-. "<div>Writes history to, in the<br />clear</div><div style='font-size: 70%'>[Multi and Get, no encryption]</div>" .->21
+    9-. "<div>Invokes tools on, attaching<br />an app-identity credential<br />when configured</div><div style='font-size: 70%'>[JSON-RPC over HTTPS]</div>" .->34
+    9-. "<div>Invokes HTTPEndpoints and<br />HTTP bindings on</div><div style='font-size: 70%'>[HTTPS]</div>" .->35
+    9-. "<div>Fetches its X.509 and<br />JWT-SVIDs from</div><div style='font-size: 70%'>[gRPC over mTLS]</div>" .->22
+    29-. "<div>Validates runtime-issued<br />JWT-SVIDs against, as a<br />relying party</div><div style='font-size: 70%'>[OIDC discovery and JWKS]</div>" .->22
+    9-. "<div>PROPOSED. Exchanges a grant<br />for a downstream token with,<br />authenticating as the<br />sidecar's SVID</div><div style='font-size: 70%'>[RFC 8693 over HTTPS]</div>" .->28
+    9-. "<div>PROPOSED. Speaks the<br />on-behalf-of dialect to,<br />which is why the abstraction<br />exists</div><div style='font-size: 70%'>[RFC 7523 over HTTPS]</div>" .->29
+
+  end

@@ -1,0 +1,73 @@
+graph TB
+
+  subgraph diagram ["System landscape: agent authorization around a durable execution engine"]
+
+    subgraph group1 ["Agent platform"]
+      style group1 stroke:#cccccc,stroke-dasharray:5
+
+      22["Dapr Sentry<br/>[Software System]<br/>CA and, since 1.16, an OIDC<br/>issuer. Issues X.509 and<br/>JWT-SVIDs bound to a<br/>per-app-id SPIFFE ID."]
+      style 22 fill:#6b7f9e,stroke:#4a586e,color:#ffffff
+      3["Dapr-based agent platform<br/>[Software System]<br/>Runs multi-tenant agent work<br/>as durable workflows, one<br/>sidecar per app-id."]
+    end
+
+    subgraph group2 ["Alternative durable engine"]
+      style group2 stroke:#cccccc,stroke-dasharray:5
+
+      23["Temporal<br/>[Software System]<br/>Dedicated durable-execution<br/>platform. Same replay core,<br/>different control surfaces."]
+      style 23 fill:#6b7f9e,stroke:#4a586e,color:#ffffff
+    end
+
+    subgraph group3 ["Identity and authorization"]
+      style group3 stroke:#cccccc,stroke-dasharray:5
+
+      28["Authorization server / STS<br/>[Software System]<br/>Keycloak 26.2+, ZITADEL,<br/>Auth0, Authlete. Issues the<br/>composite token carrying the<br/>act chain."]
+      style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      29["Microsoft Entra ID<br/>[Software System]<br/>Does not implement RFC 8693.<br/>On-behalf-of is RFC 7523 plus<br/>requested_token_use, no actor<br/>vocabulary."]
+      style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      30["Enterprise IdP<br/>[Software System]<br/>Okta Cross App Access and<br/>Agent SSO. Governs<br/>agent-to-app access at the<br/>edge, and cannot see an<br/>orchestration boundary."]
+      style 30 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      31["Egress and agent gateway<br/>[Software System]<br/>agentgateway or Kong AI<br/>Gateway. Request-scoped token<br/>exchange and credential<br/>injection; under the<br/>gateway-custody rule it holds<br/>the credential, not the<br/>agent."]
+      style 31 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      32["Policy decision point<br/>[Software System]<br/>OPA, Cerbos or Cedar.<br/>Stateless decision engines<br/>holding per-tenant contract<br/>policy data."]
+      style 32 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      33["Relationship store<br/>[Software System]<br/>OpenFGA or SpiceDB.<br/>Zanzibar-lineage stores<br/>answering entitlement through<br/>a Check API."]
+      style 33 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    end
+
+    subgraph group4 ["Targets"]
+      style group4 stroke:#cccccc,stroke-dasharray:5
+
+      34["MCP server<br/>[Software System]<br/>Tool surface. Its<br/>specification forbids<br/>transiting tokens not issued<br/>for it."]
+      style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      35["Downstream API<br/>[Software System]<br/>Claims, payments and SaaS.<br/>Its own per-user<br/>authorization is what<br/>delegation makes work."]
+      style 35 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      36["Model provider<br/>[Software System]<br/>Everything it returns to an<br/>activity is untrusted<br/>content."]
+      style 36 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    end
+
+    1["Human operator<br/>[Person]<br/>Triages one tenant's<br/>exception queue. The<br/>initiating principal whose<br/>authority a run carries."]
+    2["Platform operator<br/>[Person]<br/>Has to render workflow<br/>history to answer a question,<br/>without holding a tenant's<br/>keys."]
+
+    3 -.->|"PROPOSED. Suspends the run<br/>and raises an approval<br/>request to, on escalate<br/>[external event]"| 1
+    3 -.->|"PROPOSED. Asks entitlement of<br/>[Check API over gRPC]"| 33
+    3 -.->|"PROPOSED. Asks per-tenant<br/>contract policy of<br/>[decision API over HTTP]"| 32
+    1 -->|"Starts and triages agent runs<br/>in<br/>[HTTPS]"| 3
+    1 -->|"Authenticates to<br/>[OIDC]"| 30
+    2 -->|"Reads workflow history<br/>through, in the clear<br/>[HTTP]"| 3
+    2 -->|"Inspects workflow history<br/>through<br/>[HTTPS]"| 23
+    3 -->|"Performs a hand-rolled<br/>exchange against<br/>[RFC 8693 over HTTPS]"| 28
+    3 -->|"Branches to a second request<br/>shape for<br/>[RFC 7523 over HTTPS]"| 29
+    3 -->|"Calls, with the token it<br/>minted and never returns<br/>[HTTPS]"| 35
+    3 -->|"Calls models from inside an<br/>activity<br/>[HTTPS]"| 36
+    3 -->|"Invokes tools on, attaching<br/>an app-identity credential<br/>when configured<br/>[JSON-RPC over HTTPS]"| 34
+    3 -->|"Fetches its X.509 and<br/>JWT-SVIDs from<br/>[gRPC over mTLS]"| 22
+    29 -->|"Validates runtime-issued<br/>JWT-SVIDs against, as a<br/>relying party<br/>[OIDC discovery and JWKS]"| 22
+    3 -->|"Can instead make<br/>credential-free egress calls<br/>through<br/>[HTTPS]"| 31
+    31 -->|"Exchanges tokens with<br/>[RFC 8693 over HTTPS]"| 28
+    31 -->|"Calls with the injected<br/>credential<br/>[HTTPS]"| 35
+    31 -->|"Calls with the injected<br/>credential<br/>[HTTPS]"| 34
+    30 -->|"Issues the enterprise<br/>agent-access token presented<br/>at<br/>[OAuth 2.0]"| 31
+    23 -->|"Calls from inside an activity<br/>[HTTPS]"| 35
+    23 -->|"Calls models from inside an<br/>activity<br/>[HTTPS]"| 36
+
+  end

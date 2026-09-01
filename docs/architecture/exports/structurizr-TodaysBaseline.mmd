@@ -1,0 +1,46 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["Component view: Agent application - where token handling lives today"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    28["<div style='font-weight: bold'>Authorization server / STS</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Keycloak 26.2+, ZITADEL,<br />Auth0, Authlete. Issues the<br />composite token carrying the<br />act chain.</div>"]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["<div style='font-weight: bold'>Microsoft Entra ID</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Does not implement RFC 8693.<br />On-behalf-of is RFC 7523 plus<br />requested_token_use, no actor<br />vocabulary.</div>"]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    35["<div style='font-weight: bold'>Downstream API</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Claims, payments and SaaS.<br />Its own per-user<br />authorization is what<br />delegation makes work.</div>"]
+    style 35 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+      style 3 fill:#ffffff,stroke:#444444,color:#444444
+
+      subgraph 4 ["Agent application"]
+        style 4 fill:#ffffff,stroke:#444444,color:#444444
+
+        5["<div style='font-weight: bold'>Workflow orchestrator</div><div style='font-size: 70%; margin-top: 0px'>[Component: Dapr Workflow SDK]</div><div style='font-size: 80%; margin-top:10px'>Deterministic and replayed:<br />no I/O, no clock, no LLM.<br />Holds grants, never a token.</div>"]
+        style 5 fill:#ffffff,stroke:#444444,color:#444444
+        6["<div style='font-weight: bold'>Activity worker</div><div style='font-size: 70%; margin-top: 0px'>[Component: Dapr Workflow SDK]</div><div style='font-size: 80%; margin-top:10px'>The only place side effects<br />live. Mints a token per use<br />and returns the business<br />result only.</div>"]
+        style 6 fill:#ffffff,stroke:#444444,color:#444444
+        7["<div style='font-weight: bold'>DurableAgent agent loop</div><div style='font-size: 70%; margin-top: 0px'>[Component: Dapr Agents]</div><div style='font-size: 80%; margin-top:10px'>Memory tiers, tool calling,<br />multi-agent orchestration.<br />Implements no SPIFFE identity<br />of its own.</div>"]
+        style 7 fill:#ffffff,stroke:#444444,color:#444444
+        8["<div style='font-weight: bold'>Hand-rolled exchange and token cache</div><div style='font-size: 70%; margin-top: 0px'>[Component: Application code]</div><div style='font-size: 80%; margin-top:10px'>Per-IdP branching, per-worker<br />cache, expiry tracked by<br />hand. Rebuilt in every<br />application.</div>"]
+        style 8 fill:#ffffff,stroke:#444444,color:#444444
+      end
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+        style 9 fill:#ffffff,stroke:#444444,color:#444444
+
+        10["<div style='font-weight: bold'>Workflow engine</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go, durabletask-go]</div><div style='font-size: 80%; margin-top:10px'>durabletask-go orchestration<br />hosted as actors. Writes the<br />append-only history.</div>"]
+        style 10 fill:#ffffff,stroke:#444444,color:#444444
+      end
+
+    end
+
+    5-. "<div>Schedules activities and<br />child workflows through</div><div style='font-size: 70%'>[gRPC]</div>" .->10
+    6-. "<div>Obtains a downstream token<br />from</div><div style='font-size: 70%'>[in-process call]</div>" .->8
+    7-. "<div>Drives its tool-calling loop<br />as</div><div style='font-size: 70%'>[in-process call]</div>" .->5
+    8-. "<div>Performs a hand-rolled<br />exchange against</div><div style='font-size: 70%'>[RFC 8693 over HTTPS]</div>" .->28
+    8-. "<div>Branches to a second request<br />shape for</div><div style='font-size: 70%'>[RFC 7523 over HTTPS]</div>" .->29
+    6-. "<div>Calls, with the token it<br />minted and never returns</div><div style='font-size: 70%'>[HTTPS]</div>" .->35
+
+  end

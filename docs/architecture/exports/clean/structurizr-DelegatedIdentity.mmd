@@ -1,0 +1,41 @@
+graph TB
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - proposed delegated-identity resolution"]
+
+    28["Authorization server / STS<br/>[Software System]<br/>Keycloak 26.2+, ZITADEL,<br/>Auth0, Authlete. Issues the<br/>composite token carrying the<br/>act chain."]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["Microsoft Entra ID<br/>[Software System]<br/>Does not implement RFC 8693.<br/>On-behalf-of is RFC 7523 plus<br/>requested_token_use, no actor<br/>vocabulary."]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    34["MCP server<br/>[Software System]<br/>Tool surface. Its<br/>specification forbids<br/>transiting tokens not issued<br/>for it."]
+    style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+
+        10["Workflow engine<br/>[Component: Go, durabletask-go]<br/>durabletask-go orchestration<br/>hosted as actors. Writes the<br/>append-only history."]
+        14["MCP client and auth round-tripper<br/>[Component: Go]<br/>Invokes tools for an<br/>MCPServer resource and<br/>attaches an app-identity<br/>credential when configured."]
+        15["Delegation context<br/>[Component: Go]<br/>PROPOSED. Non-secret subject,<br/>grant reference, scopes and<br/>act chain, carried like trace<br/>context. The subject token is<br/>never persisted."]
+        style 15 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+        16["onBehalfOf resolver<br/>[Component: Go]<br/>PROPOSED. At call time: read<br/>the context, intersect<br/>scopes, check the audience<br/>allowlist, mint, inject."]
+        style 16 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+        17["Token cache<br/>[Component: Go]<br/>PROPOSED. Per-sidecar, in<br/>memory only, singleflight,<br/>TTL capped below token<br/>expiry."]
+        style 17 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+        18["sts component<br/>[Component: Go, components-contrib]<br/>PROPOSED. Pluggable RFC 8693<br/>client authenticating as the<br/>sidecar's own JWT-SVID. No<br/>static client secret."]
+        style 18 stroke:#b3591a,color:#b3591a,stroke-dasharray: 6 4
+      end
+
+      21[("State store<br/>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]<br/>Workflow history, actor state<br/>and application state all<br/>land here.")]
+    end
+
+    14 -->|"Invokes tools on, attaching<br/>an app-identity credential<br/>when configured<br/>[JSON-RPC over HTTPS]"| 34
+    10 -.->|"PROPOSED. Establishes and<br/>propagates, to activities and<br/>child workflows<br/>[in-process call]"| 15
+    15 -.->|"PROPOSED. Persists everything<br/>except the subject token with<br/>the instance<br/>[actor state]"| 21
+    14 -.->|"PROPOSED. Resolves an<br/>onBehalfOf auth mode through<br/>[in-process call]"| 16
+    16 -.->|"PROPOSED. Reads the subject,<br/>grant reference and act chain<br/>from<br/>[in-process call]"| 15
+    16 -.->|"PROPOSED. Checks and fills,<br/>keyed on subject, audience,<br/>effective scopes and act<br/>chain<br/>[in-process call]"| 17
+    16 -.->|"PROPOSED. Requests an<br/>exchange from, on a cache<br/>miss<br/>[component API]"| 18
+    18 -.->|"PROPOSED. Exchanges a grant<br/>for a downstream token with,<br/>authenticating as the<br/>sidecar's SVID<br/>[RFC 8693 over HTTPS]"| 28
+    18 -.->|"PROPOSED. Speaks the<br/>on-behalf-of dialect to,<br/>which is why the abstraction<br/>exists<br/>[RFC 7523 over HTTPS]"| 29
+
+  end

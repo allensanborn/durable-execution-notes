@@ -1,0 +1,40 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["Component view: Dapr sidecar (daprd) - the state encryption boundary"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    2["<div style='font-weight: bold'>Platform operator</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Has to render workflow<br />history to answer a question,<br />without holding a tenant's<br />keys.</div>"]
+    style 2 fill:#ffffff,stroke:#444444,color:#444444
+
+    subgraph 3 ["Dapr-based agent platform"]
+      style 3 fill:#ffffff,stroke:#444444,color:#444444
+
+      subgraph 9 ["Dapr sidecar (daprd)"]
+        style 9 fill:#ffffff,stroke:#444444,color:#444444
+
+        10["<div style='font-weight: bold'>Workflow engine</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go, durabletask-go]</div><div style='font-size: 80%; margin-top:10px'>durabletask-go orchestration<br />hosted as actors. Writes the<br />append-only history.</div>"]
+        style 10 fill:#ffffff,stroke:#444444,color:#444444
+        11["<div style='font-weight: bold'>Actor state path</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go]</div><div style='font-size: 80%; margin-top:10px'>pkg/actors/state. Calls the<br />store's Multi and Get<br />directly and never imports<br />pkg/encryption.</div>"]
+        style 11 fill:#ffffff,stroke:#444444,color:#444444
+        12["<div style='font-weight: bold'>State building block API</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go]</div><div style='font-size: 80%; margin-top:10px'>The /v1.0/state HTTP and gRPC<br />handlers. The only caller of<br />the encryption helper.</div>"]
+        style 12 fill:#ffffff,stroke:#444444,color:#444444
+        13["<div style='font-weight: bold'>State encryption helper</div><div style='font-size: 70%; margin-top: 0px'>[Component: Go, pkg/encryption]</div><div style='font-size: 80%; margin-top:10px'>AES-GCM with keys from a<br />secret store. Wraps values at<br />the state API, not at the<br />store object.</div>"]
+        style 13 fill:#ffffff,stroke:#444444,color:#444444
+      end
+
+      21[("<div style='font-weight: bold'>State store</div><div style='font-size: 70%; margin-top: 0px'>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]</div><div style='font-size: 80%; margin-top:10px'>Workflow history, actor state<br />and application state all<br />land here.</div>")]
+      style 21 fill:#ffffff,stroke:#444444,color:#444444
+      4["<div style='font-weight: bold'>Agent application</div><div style='font-size: 70%; margin-top: 0px'>[Container: Python or .NET, Dapr Agents]</div><div style='font-size: 80%; margin-top:10px'>Orchestrator, activity<br />workers and agent loop. Every<br />token today is handled by<br />code in here.</div>"]
+      style 4 fill:#ffffff,stroke:#444444,color:#444444
+    end
+
+    2-. "<div>Reads workflow history<br />through, in the clear</div><div style='font-size: 70%'>[HTTP]</div>" .->10
+    4-. "<div>Schedules activities and<br />child workflows through</div><div style='font-size: 70%'>[gRPC]</div>" .->10
+    10-. "<div>Persists history through</div><div style='font-size: 70%'>[in-process call]</div>" .->11
+    11-. "<div>Writes history to, in the<br />clear</div><div style='font-size: 70%'>[Multi and Get, no encryption]</div>" .->21
+    4-. "<div>Writes application state<br />through</div><div style='font-size: 70%'>[HTTP or gRPC]</div>" .->12
+    12-. "<div>Wraps every value through</div><div style='font-size: 70%'>[TryEncryptValue and TryDecryptValue]</div>" .->13
+    13-. "<div>Writes AES-GCM ciphertext to</div><div style='font-size: 70%'>[state component API]</div>" .->21
+
+  end

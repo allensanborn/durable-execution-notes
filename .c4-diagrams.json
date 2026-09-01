@@ -6,6 +6,10 @@
   "diagramDir": "docs/architecture",
   "workspace": "docs/architecture/workspace.dsl",
   "exportDir": "docs/architecture/exports",
-  "grill": { "pre": "done", "post": "on" },
-  "notes": "Tier 1 (Docker, headless). Mermaid is embedded in the published markdown, so exports are post-processed by tools/structurizr-mermaid-clean.py: Structurizr emits HTML <div> labels that GitHub renders as literal text, and hardcoded white fills that break dark mode. Verified 2026-09-01 by rendering with htmlLabels disabled."
+  "grill": {
+    "pre": "done",
+    "post": "on"
+  },
+  "notes": "Tier 1 (Docker, headless). Mermaid is embedded in the published markdown, so exports are post-processed by tools/structurizr-mermaid-clean.py: Structurizr emits HTML <div> labels that GitHub renders as literal text, hardcoded white fills and a #444444/#cccccc palette that breaks in one theme or the other, no element border style (so a `border dashed` is lost), and every relationship as a dotted arrow (so a dashed relationship style means nothing). The script fixes all five; --dash-stroke and --dash-edge put the Proposed/shipping distinction back. tools/build-diagrams.sh runs the whole chain (validate, inspect, export, clean, render SVG with htmlLabels off) and fails if a <div> reaches the SVG. Verified 2026-09-01 by rendering with htmlLabels disabled.",
+  "workspaceScope": "unscoped landscape (several systems in one workspace, decided deliberately; see the report)"
 }

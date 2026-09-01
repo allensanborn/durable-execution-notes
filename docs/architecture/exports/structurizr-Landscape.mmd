@@ -1,0 +1,78 @@
+graph TB
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["System landscape: agent authorization around a durable execution engine"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    subgraph group1 ["Agent platform"]
+      style group1 fill:#ffffff,stroke:#cccccc,color:#cccccc,stroke-dasharray:5
+
+      22["<div style='font-weight: bold'>Dapr Sentry</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>CA and, since 1.16, an OIDC<br />issuer. Issues X.509 and<br />JWT-SVIDs bound to a<br />per-app-id SPIFFE ID.</div>"]
+      style 22 fill:#6b7f9e,stroke:#4a586e,color:#ffffff
+      3["<div style='font-weight: bold'>Dapr-based agent platform</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Runs multi-tenant agent work<br />as durable workflows, one<br />sidecar per app-id.</div>"]
+      style 3 fill:#ffffff,stroke:#444444,color:#444444
+    end
+
+    subgraph group2 ["Alternative durable engine"]
+      style group2 fill:#ffffff,stroke:#cccccc,color:#cccccc,stroke-dasharray:5
+
+      23["<div style='font-weight: bold'>Temporal</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Dedicated durable-execution<br />platform. Same replay core,<br />different control surfaces.</div>"]
+      style 23 fill:#6b7f9e,stroke:#4a586e,color:#ffffff
+    end
+
+    subgraph group3 ["Identity and authorization"]
+      style group3 fill:#ffffff,stroke:#cccccc,color:#cccccc,stroke-dasharray:5
+
+      28["<div style='font-weight: bold'>Authorization server / STS</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Keycloak 26.2+, ZITADEL,<br />Auth0, Authlete. Issues the<br />composite token carrying the<br />act chain.</div>"]
+      style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      29["<div style='font-weight: bold'>Microsoft Entra ID</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Does not implement RFC 8693.<br />On-behalf-of is RFC 7523 plus<br />requested_token_use, no actor<br />vocabulary.</div>"]
+      style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      30["<div style='font-weight: bold'>Enterprise IdP</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Okta Cross App Access and<br />Agent SSO. Governs<br />agent-to-app access at the<br />edge, and cannot see an<br />orchestration boundary.</div>"]
+      style 30 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      31["<div style='font-weight: bold'>Egress and agent gateway</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>agentgateway or Kong AI<br />Gateway. Request-scoped token<br />exchange and credential<br />injection; under the<br />gateway-custody rule it holds<br />the credential, not the<br />agent.</div>"]
+      style 31 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      32["<div style='font-weight: bold'>Policy decision point</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>OPA, Cerbos or Cedar.<br />Stateless decision engines<br />holding per-tenant contract<br />policy data.</div>"]
+      style 32 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      33["<div style='font-weight: bold'>Relationship store</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>OpenFGA or SpiceDB.<br />Zanzibar-lineage stores<br />answering entitlement through<br />a Check API.</div>"]
+      style 33 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    end
+
+    subgraph group4 ["Targets"]
+      style group4 fill:#ffffff,stroke:#cccccc,color:#cccccc,stroke-dasharray:5
+
+      34["<div style='font-weight: bold'>MCP server</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Tool surface. Its<br />specification forbids<br />transiting tokens not issued<br />for it.</div>"]
+      style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      35["<div style='font-weight: bold'>Downstream API</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Claims, payments and SaaS.<br />Its own per-user<br />authorization is what<br />delegation makes work.</div>"]
+      style 35 fill:#8a8a8a,stroke:#606060,color:#ffffff
+      36["<div style='font-weight: bold'>Model provider</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div><div style='font-size: 80%; margin-top:10px'>Everything it returns to an<br />activity is untrusted<br />content.</div>"]
+      style 36 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    end
+
+    1["<div style='font-weight: bold'>Human operator</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Triages one tenant's<br />exception queue. The<br />initiating principal whose<br />authority a run carries.</div>"]
+    style 1 fill:#ffffff,stroke:#444444,color:#444444
+    2["<div style='font-weight: bold'>Platform operator</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div><div style='font-size: 80%; margin-top:10px'>Has to render workflow<br />history to answer a question,<br />without holding a tenant's<br />keys.</div>"]
+    style 2 fill:#ffffff,stroke:#444444,color:#444444
+
+    3-. "<div>PROPOSED. Suspends the run<br />and raises an approval<br />request to, on escalate</div><div style='font-size: 70%'>[external event]</div>" .->1
+    3-. "<div>PROPOSED. Asks entitlement of</div><div style='font-size: 70%'>[Check API over gRPC]</div>" .->33
+    3-. "<div>PROPOSED. Asks per-tenant<br />contract policy of</div><div style='font-size: 70%'>[decision API over HTTP]</div>" .->32
+    1-. "<div>Starts and triages agent runs<br />in</div><div style='font-size: 70%'>[HTTPS]</div>" .->3
+    1-. "<div>Authenticates to</div><div style='font-size: 70%'>[OIDC]</div>" .->30
+    2-. "<div>Reads workflow history<br />through, in the clear</div><div style='font-size: 70%'>[HTTP]</div>" .->3
+    2-. "<div>Inspects workflow history<br />through</div><div style='font-size: 70%'>[HTTPS]</div>" .->23
+    3-. "<div>Performs a hand-rolled<br />exchange against</div><div style='font-size: 70%'>[RFC 8693 over HTTPS]</div>" .->28
+    3-. "<div>Branches to a second request<br />shape for</div><div style='font-size: 70%'>[RFC 7523 over HTTPS]</div>" .->29
+    3-. "<div>Calls, with the token it<br />minted and never returns</div><div style='font-size: 70%'>[HTTPS]</div>" .->35
+    3-. "<div>Calls models from inside an<br />activity</div><div style='font-size: 70%'>[HTTPS]</div>" .->36
+    3-. "<div>Invokes tools on, attaching<br />an app-identity credential<br />when configured</div><div style='font-size: 70%'>[JSON-RPC over HTTPS]</div>" .->34
+    3-. "<div>Fetches its X.509 and<br />JWT-SVIDs from</div><div style='font-size: 70%'>[gRPC over mTLS]</div>" .->22
+    29-. "<div>Validates runtime-issued<br />JWT-SVIDs against, as a<br />relying party</div><div style='font-size: 70%'>[OIDC discovery and JWKS]</div>" .->22
+    3-. "<div>Can instead make<br />credential-free egress calls<br />through</div><div style='font-size: 70%'>[HTTPS]</div>" .->31
+    31-. "<div>Exchanges tokens with</div><div style='font-size: 70%'>[RFC 8693 over HTTPS]</div>" .->28
+    31-. "<div>Calls with the injected<br />credential</div><div style='font-size: 70%'>[HTTPS]</div>" .->35
+    31-. "<div>Calls with the injected<br />credential</div><div style='font-size: 70%'>[HTTPS]</div>" .->34
+    30-. "<div>Issues the enterprise<br />agent-access token presented<br />at</div><div style='font-size: 70%'>[OAuth 2.0]</div>" .->31
+    23-. "<div>Calls from inside an activity</div><div style='font-size: 70%'>[HTTPS]</div>" .->35
+    23-. "<div>Calls models from inside an<br />activity</div><div style='font-size: 70%'>[HTTPS]</div>" .->36
+
+  end

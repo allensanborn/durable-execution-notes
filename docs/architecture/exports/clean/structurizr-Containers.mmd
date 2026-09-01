@@ -1,0 +1,43 @@
+graph TB
+
+  subgraph diagram ["Container view: Dapr-based agent platform"]
+
+    1["Human operator<br/>[Person]<br/>Triages one tenant's<br/>exception queue. The<br/>initiating principal whose<br/>authority a run carries."]
+    2["Platform operator<br/>[Person]<br/>Has to render workflow<br/>history to answer a question,<br/>without holding a tenant's<br/>keys."]
+    22["Dapr Sentry<br/>[Software System]<br/>CA and, since 1.16, an OIDC<br/>issuer. Issues X.509 and<br/>JWT-SVIDs bound to a<br/>per-app-id SPIFFE ID."]
+    style 22 fill:#6b7f9e,stroke:#4a586e,color:#ffffff
+    28["Authorization server / STS<br/>[Software System]<br/>Keycloak 26.2+, ZITADEL,<br/>Auth0, Authlete. Issues the<br/>composite token carrying the<br/>act chain."]
+    style 28 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    29["Microsoft Entra ID<br/>[Software System]<br/>Does not implement RFC 8693.<br/>On-behalf-of is RFC 7523 plus<br/>requested_token_use, no actor<br/>vocabulary."]
+    style 29 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    34["MCP server<br/>[Software System]<br/>Tool surface. Its<br/>specification forbids<br/>transiting tokens not issued<br/>for it."]
+    style 34 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    35["Downstream API<br/>[Software System]<br/>Claims, payments and SaaS.<br/>Its own per-user<br/>authorization is what<br/>delegation makes work."]
+    style 35 fill:#8a8a8a,stroke:#606060,color:#ffffff
+    36["Model provider<br/>[Software System]<br/>Everything it returns to an<br/>activity is untrusted<br/>content."]
+    style 36 fill:#8a8a8a,stroke:#606060,color:#ffffff
+
+    subgraph 3 ["Dapr-based agent platform"]
+
+      21[("State store<br/>[Container: Redis, PostgreSQL, CosmosDB or DynamoDB]<br/>Workflow history, actor state<br/>and application state all<br/>land here.")]
+      4["Agent application<br/>[Container: Python or .NET, Dapr Agents]<br/>Orchestrator, activity<br/>workers and agent loop. Every<br/>token today is handled by<br/>code in here."]
+      9["Dapr sidecar (daprd)<br/>[Container: Go]<br/>Workflow engine, actors,<br/>state and MCP clients. Holds<br/>the workload SVID; the app<br/>cannot ask for one."]
+    end
+
+    9 -.->|"PROPOSED. Suspends the run<br/>and raises an approval<br/>request to, on escalate<br/>[external event]"| 1
+    1 -->|"Starts and triages agent runs<br/>in<br/>[HTTPS]"| 4
+    2 -->|"Reads workflow history<br/>through, in the clear<br/>[HTTP]"| 9
+    4 -->|"Schedules workflows and<br/>activities through<br/>[gRPC over localhost]"| 9
+    4 -->|"Performs a hand-rolled<br/>exchange against<br/>[RFC 8693 over HTTPS]"| 28
+    4 -->|"Branches to a second request<br/>shape for<br/>[RFC 7523 over HTTPS]"| 29
+    4 -->|"Calls, with the token it<br/>minted and never returns<br/>[HTTPS]"| 35
+    4 -->|"Calls models from inside an<br/>activity<br/>[HTTPS]"| 36
+    9 -->|"Writes history to, in the<br/>clear<br/>[Multi and Get, no encryption]"| 21
+    9 -->|"Invokes tools on, attaching<br/>an app-identity credential<br/>when configured<br/>[JSON-RPC over HTTPS]"| 34
+    9 -->|"Invokes HTTPEndpoints and<br/>HTTP bindings on<br/>[HTTPS]"| 35
+    9 -->|"Fetches its X.509 and<br/>JWT-SVIDs from<br/>[gRPC over mTLS]"| 22
+    29 -->|"Validates runtime-issued<br/>JWT-SVIDs against, as a<br/>relying party<br/>[OIDC discovery and JWKS]"| 22
+    9 -.->|"PROPOSED. Exchanges a grant<br/>for a downstream token with,<br/>authenticating as the<br/>sidecar's SVID<br/>[RFC 8693 over HTTPS]"| 28
+    9 -.->|"PROPOSED. Speaks the<br/>on-behalf-of dialect to,<br/>which is why the abstraction<br/>exists<br/>[RFC 7523 over HTTPS]"| 29
+
+  end
