@@ -39,6 +39,38 @@ Okta's Cross App Access and Agent SSO govern agent-to-app access at the **IdP la
 
 **Terminate the enterprise protocol at the edge, carry delegation inward.** XAA is an enterprise-edge protocol; nobody will pay an IdP round trip per internal hop at internal-call latency. So accept the XAA token at ingress, exchange it **once** for an internal grant, then carry that grant through the run with `act` nesting and enforce it per activity. **One external round trip, N internal enforcement points.** That interior is structurally unavailable to an IdP, which cannot see an orchestration boundary.
 
+*Dynamic view, container level, of a **proposed** design that nothing ships today: where does the enterprise IdP protocol stop, and what does the runtime take over?*
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant AG as Agent workload
+    participant IDP as Enterprise IdP
+    participant ING as Ingress
+    participant ORC as Orchestrator
+    participant HK as Before-activity hook
+    participant ACT as Activity
+    participant APP as Downstream app
+
+    Note over AG: identity is a Sentry-issued, OIDC-discoverable JWT<br/>bound to a SPIFFE ID (shipping since Dapr 1.16),<br/>not a configured client_id
+    AG->>IDP: present attested workload identity into the XAA flow
+    IDP-->>AG: XAA token: may this agent reach this app
+    AG->>ING: request carrying the XAA token
+    ING->>ING: exchange ONCE, RFC 8693, into an internal grant
+    Note over IDP,ING: one external round trip. Nobody pays an IdP<br/>hop at internal-call latency.
+    ING->>ORC: start the run with the grant attached
+
+    loop N internal enforcement points, no further IdP round trip
+        ORC->>HK: schedule activity, grant attached, act chain nested
+        HK->>HK: does this typed action fall inside the grant?
+        HK->>ACT: allow
+        ACT->>APP: call, token minted per use inside the activity
+        APP-->>ACT: business result, never a token
+    end
+```
+
+**Key.** Everything below the ingress line is proposed, not implemented: the attested workload JWT exists, the exchange-once-and-carry-inward path does not. Solid arrows are calls; the loop block marks the repeated interior.
+
 The positioning line: *an enterprise IdP protocol answers "may this agent talk to Salesforce." The workflow engine answers "and across the twelve steps of the run that follows, which of them may touch what."*
 
 ## Abstracting OPA versus OpenFGA

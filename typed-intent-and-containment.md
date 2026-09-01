@@ -40,6 +40,38 @@ Three components:
 - **A quarantined model** is the only component allowed to read untrusted content. It can return extracted data but never take an action, and everything it returns is tagged untrusted.
 - **A custom interpreter** runs the program and tags every value with provenance and visibility metadata — the "capabilities" in the name — so a policy can fire before any action executes: an address that came from untrusted content cannot be a recipient unless it matches known contacts or a human approves.
 
+*Container view of CaMeL: which component is allowed to read untrusted content, and what must never cross back out of it?*
+
+```mermaid
+flowchart TB
+    U(["User<br/><small>[Person] issues the trusted request</small>"])
+
+    subgraph TRUST["Trusted zone: never reads untrusted content"]
+        P["Privileged model<br/><small>[Container] writes a small program<br/>from the request alone</small>"]
+        I["Custom interpreter<br/><small>[Container] runs the program and tags every<br/>value with provenance and visibility metadata</small>"]
+        POL{"Security policy<br/><small>fires before any action executes</small>"}
+    end
+
+    subgraph QUAR["Quarantine: the only component allowed to read untrusted content"]
+        Q["Quarantined model<br/><small>[Container] may extract data,<br/>may never take an action</small>"]
+    end
+
+    EXT[("Untrusted content<br/><small>[Software System] notes, email, web pages</small>")]
+    ACTION["Action or tool call<br/><small>e.g. send the notes to a recipient address</small>"]
+    BLOCK(["blocked"])
+
+    U -->|"issues the trusted request to"| P
+    P -->|"emits the program to"| I
+    I -->|"asks to extract named fields from untrusted text"| Q
+    EXT -->|"is read by"| Q
+    Q -->|"returns extracted values, tagged untrusted, to"| I
+    I -->|"submits the proposed action, with each argument's tag, to"| POL
+    POL -->|"allow: every constrained argument has acceptable provenance"| ACTION
+    POL -->|"deny: a tainted value reached a dangerous argument"| BLOCK
+```
+
+**Key.** The two boxed zones are trust zones, and the diagram's whole claim is the arrows that are absent between them: no arrow runs from the untrusted content into the privileged model, and none runs from the quarantined model to an action. Cylinder is an external data source, rounded boxes are a person and a terminal outcome, the diamond is a decision point.
+
 If the meeting notes were poisoned to claim Bob's address is `attacker@evil.com`, the send is blocked. The model was fooled, but the fooling was never allowed to reach the action, because the interpreter knows that value is tainted.
 
 **What CaMeL does not do, precisely stated:** it does not understand intent; it contains the blast radius of misunderstanding it. It guards the **injection route** only. An agent that misjudges a genuinely open intent from a perfectly trusted request, with no poisoned input anywhere, is not what CaMeL's taint tracking addresses, because there is no untrusted provenance to key policy on. Generic containment (backups, irreversibility gates, a human on unrecoverable actions) still bounds that case, but the comprehension gap underneath is never closed.
@@ -96,6 +128,33 @@ Posta's Part 2 answers the narrow follow-up — when the process holding the tok
 - **KEK in a Kubernetes Secret.** DB theft survives, but controller compromise is catastrophic: the KEK is in the same trust domain, so an attacker decrypts the entire store offline, forever. Demo only.
 - **KEK in a cloud KMS.** The master key never leaves KMS and every unwrap is IAM-gated, auditable and revocable. But the controller holds standing `Decrypt`, so a live compromise can loop-decrypt the whole table. KMS "does not stop a compromised controller from decrypting your store; it stops it from decrypting silently, in bulk, and offline."
 - **Broker-gated KMS grants.** The controller loses `Decrypt` entirely; a separate broker holding grant-creation rights, with no database and no ciphertext, must re-verify the subject token and mint a short-lived, scoped grant per decrypt. Decryption now needs **two independent trust domains** — the CB4A PDP/CDP separation realized cryptographically. This *prevents* single-component mass decrypt rather than merely detecting it, at the cost of latency and a new component to harden.
+
+*Dynamic view, container level, of the third mode: which two trust domains have to cooperate before a single stored credential can be decrypted?*
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Caller
+    participant CTL as Broker controller
+    participant DB as Token store
+    participant BR as Grant broker
+    participant KMS as Cloud KMS
+
+    C->>CTL: request needing a stored credential, with subject token
+    CTL->>DB: read the row for this owner and resource
+    DB-->>CTL: wrapped DEK and ciphertext only
+    Note over CTL: the controller holds NO standing Decrypt permission
+    CTL->>BR: ask for a decrypt grant, forwarding the subject token
+    BR->>BR: re-verify the subject token. The owner must equal<br/>whoever is authenticated on THIS request
+    Note over BR: the broker holds grant-creation rights,<br/>no database and no ciphertext
+    BR->>KMS: create a short-lived, scoped grant
+    KMS-->>BR: grant
+    BR-->>CTL: grant, good for this one decrypt
+    CTL->>KMS: unwrap the DEK under the grant
+    KMS-->>CTL: DEK
+    CTL->>CTL: decrypt the row. The AAD binds ciphertext to owner<br/>and resource, so rows cannot be moved between users
+    CTL-->>C: result
+```
 
 The insight underneath the third mode generalizes: static key policies cannot express "the owner must equal whoever is authenticated on *this* request," because they only ever see the controller's role, never the end user. A per-request, per-user grant minted by a separate principal is what per-user scoping turns into once you follow the requirement all the way down.
 

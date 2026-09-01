@@ -1,0 +1,11 @@
+{
+  "tier": 1,
+  "docker": true,
+  "mcp": false,
+  "browser": false,
+  "diagramDir": "docs/architecture",
+  "workspace": "docs/architecture/workspace.dsl",
+  "exportDir": "docs/architecture/exports",
+  "grill": { "pre": "done", "post": "on" },
+  "notes": "Tier 1 (Docker, headless). Mermaid is embedded in the published markdown, so exports are post-processed by tools/structurizr-mermaid-clean.py: Structurizr emits HTML <div> labels that GitHub renders as literal text, and hardcoded white fills that break dark mode. Verified 2026-09-01 by rendering with htmlLabels disabled."
+}

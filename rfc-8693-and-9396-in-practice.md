@@ -32,6 +32,25 @@ Two 8693 claims carry the delegation chain:
 - **`act`** nests to record the chain. **Only the outermost actor is access-control relevant**; inner ones are audit history.
 - **`may_act`** lets a subject's own token pre-authorize a specific party to act for it, so the authorization server can check that a delegation was actually sanctioned rather than trusting the caller's say-so.
 
+*Dynamic view, container level: what does an RFC 8693 exchange actually move, and where does the delegation chain end up?*
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Agent
+    participant STS as Authorization server / STS
+    participant D as Downstream API
+
+    Note over A: holds the user's subject_token<br/>and its own actor_token
+    A->>STS: grant_type=urn:ietf:params:oauth:grant-type:token-exchange<br/>subject_token + actor_token + audience
+    STS->>STS: check may_act in the subject's token: was this<br/>actor pre-authorized to act for this subject?
+    STS-->>A: composite token, subject claims with act nested inside
+    Note over A,STS: Entra ID does not implement 8693. Its on-behalf-of is<br/>RFC 7523 JWT-bearer plus requested_token_use=on_behalf_of,<br/>with no standardized actor vocabulary.
+    A->>D: request carrying the composite token
+    D->>D: authorize on the OUTERMOST act entry only.<br/>Inner entries are audit history
+    D-->>A: business response
+```
+
 Public gateway implementations show the same three-grant shape in practice — 8693 token exchange as the default, RFC 7523 JWT-bearer as the second, and Entra on-behalf-of folded in as a vendor dialect of the second, with the vendor-specific `requested_token_use` parameter passed through as an additional parameter.
 
 ## RFC 9396 (RAR): ratified, largely undeployed
@@ -151,6 +170,47 @@ Three things you would be building yourself:
 1. **RAR resource-server enforcement**, because the spec assigns it to you regardless of which authorization server you pick.
 2. **The join between the token-layer delegation chain (`act`) and the execution-layer provenance** — which span, which workflow step, which tenant's data. Nothing joins these. The gateway sees tokens and cannot see the orchestration boundary; the workflow engine sees the orchestration boundary and does not mint tokens.
 3. **Chain 4, synthesis provenance**, which has no standard at all.
+
+*Container view of the assembled stack: which parts can be wired up from shipping products, and where is the seam that nothing joins?*
+
+```mermaid
+flowchart TB
+    OP(["Operator or end user<br/><small>[Person]</small>"])
+
+    subgraph TOK["Token layer: sees tokens, cannot see an orchestration boundary"]
+        GW["Gateway<br/><small>[Software System] agentgateway, Kong AI Gateway<br/>exchange and credential-injection point. Under the<br/>gateway-custody rule the agent runtime holds no<br/>downstream credential</small>"]
+        STS["STS<br/><small>[Software System] Keycloak 26.2+, ZITADEL,<br/>Auth0, Authlete</small>"]
+        IDPLOG[("IdP audit log<br/><small>[Container] act chain, jti</small>")]
+    end
+
+    subgraph EXE["Execution layer: sees the orchestration boundary, mints no tokens"]
+        WF["Durable workflow engine<br/><small>[Software System] Dapr Workflow, Temporal</small>"]
+        PDP["Policy decision point<br/><small>[Software System] OPA, Cerbos, OpenFGA,<br/>SpiceDB, Cedar</small>"]
+        HIST[("Event history<br/><small>[Container] event-sourced business record</small>")]
+    end
+
+    OTEL[("OpenTelemetry backend<br/><small>[Software System] spans</small>")]
+    API["Downstream API<br/><small>[Software System] claims, payments, SaaS</small>"]
+    SPIFFE["SPIFFE workload identity<br/><small>[Software System] X.509-SVID, and JWT-SVID<br/>usable as subject_token or actor_token</small>"]
+    JOIN{{"The join<br/><small>which token authorized which step, for which tenant</small>"}}
+
+    OP -->|"authenticates to, OIDC"| GW
+    WF -->|"makes downstream calls through, holding no credential"| GW
+    GW -->|"exchanges tokens with, RFC 8693"| STS
+    GW -->|"calls with the injected credential, HTTPS"| API
+    STS -->|"records the delegation chain in"| IDPLOG
+    WF -->|"asks a per-tool policy decision of"| PDP
+    WF -->|"appends business events to"| HIST
+    WF -->|"emits spans to"| OTEL
+    SPIFFE -->|"attests the identity of"| GW
+    SPIFFE -->|"attests the identity of"| WF
+
+    IDPLOG -.->|"would have to be correlated with"| JOIN
+    HIST -.->|"would have to be correlated with"| JOIN
+    OTEL -.->|"would have to be correlated with"| JOIN
+```
+
+**Key.** Solid arrow: assemblable today from shipping, documented products. Dashed arrow and the hexagon: not implemented by anything surveyed here, and the second of the three custom items above. Cylinders are data stores; the rounded box is a person; the two boxed zones group elements by what they can observe, not by network or ownership boundary.
 
 And the part no product solves because it is not a product problem: all of the above only binds **typed** intent. Open-ended agent work stays a containment problem, argued in [Typed intent, open intent, and the limits of agent authorization](typed-intent-and-containment.md).
 

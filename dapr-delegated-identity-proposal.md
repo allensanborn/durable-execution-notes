@@ -31,7 +31,8 @@ unchanged**. No token ever enters the application process, the workflow input or
 output, or the state store.
 
 > **Note on schema fidelity.** The `MCPServer` YAML below has been reconciled
-> against `pkg/apis/mcpserver/v1alpha1/types.go` at tag `v1.18.3`. An earlier
+> against [`pkg/apis/mcpserver/v1alpha1/types.go`](https://github.com/dapr/dapr/blob/v1.18.3/pkg/apis/mcpserver/v1alpha1/types.go)
+> at tag `v1.18.3`. An earlier
 > draft sketched it from memory and was wrong in every structural element: there
 > is no `spec.transport`, `url` and `auth` live under the transport rather than
 > at `spec` top level, and `MCPAuth` has no `clientCredentials` key. The
@@ -48,20 +49,37 @@ Dapr has spent several releases building a strong workload identity story:
 
 - **Sentry** acts as a CA, issuing short-lived X.509 SVIDs bound to a SPIFFE ID of
   the form `spiffe://<trust-domain>/ns/<namespace>/<app-id>`, used for automatic
-  mTLS between sidecars.
+  mTLS between sidecars. The ID is assembled as `"/ns/" + ns + "/" + appID` in
+  [`pkg/security/security.go:376`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/security/security.go#L376).
 - **1.16** extended Sentry to issue **JWT-SVIDs** and expose OIDC discovery
   endpoints (`/.well-known/openid-configuration`, `/jwks.json`), enabling workload
   identity federation with external IdPs. The documented path federates into
   Microsoft Entra ID via a Federated Identity Credential bound to the app's SPIFFE
   ID, with the audience requested through `--sentry-request-jwt-audiences` or the
-  `dapr.io/sentry-request-jwt-audiences` annotation.
-- **1.18** added **per-audience token SVIDs** in Sentry, and shipped the
-  **`MCPServer`** resource with built-in workflow orchestration for MCP. `MCPAuth`
+  `dapr.io/sentry-request-jwt-audiences` annotation. The version attribution is
+  checkable by tag: `pkg/sentry/server/oidc/` and `pkg/sentry/server/ca/jwt/` are
+  absent at `v1.15.0` and present at `v1.16.0`. Endpoint constants are in
+  [`pkg/sentry/server/oidc/oidc.go:40,42`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/sentry/server/oidc/oidc.go#L40-L42);
+  the annotation is in
+  [`pkg/injector/annotations/annotations.go:81`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/injector/annotations/annotations.go#L81).
+- **1.18** added **per-audience token SVIDs** in Sentry —
+  `resp.GetPerAudienceJwts()` and `spiffe.SVIDResponse.PerAudienceJWT` appear in
+  [`pkg/security/sentry.go`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/security/sentry.go)
+  in the `v1.17.0`→`v1.18.3` diff and are absent at `v1.17.0`, alongside a new
+  `Handler.FetchJWT(ctx, audience)` — and shipped the **`MCPServer`** resource with
+  built-in workflow orchestration for MCP (zero `mcpserver` paths at 1.16 and 1.17,
+  full CRD at `v1.18.3`; see
+  [`pkg/apis/mcpserver/v1alpha1/types.go`](https://github.com/dapr/dapr/blob/v1.18.3/pkg/apis/mcpserver/v1alpha1/types.go)
+  and the design in
+  [`20260304-CR-mcpserver.md`](https://github.com/dapr/proposals/blob/main/20260304-CR-mcpserver.md)).
+  `MCPAuth`
   offers two credential modes — OAuth2 client credentials (`auth.oauth2`, with the
   client secret resolved at call time via `auth.secretStore`) and SPIFFE JWT-SVID
   injection (`auth.spiffe.jwt`, naming the header, an optional value prefix, and a
   required audience). Static headers are configured separately as
-  `spec.endpoint.<transport>.headers`, alongside `auth` rather than inside it.
+  `spec.endpoint.<transport>.headers`, alongside `auth` rather than inside it. All
+  of that shape is read from
+  [`types.go` at tag `v1.18.3`](https://github.com/dapr/dapr/blob/v1.18.3/pkg/apis/mcpserver/v1alpha1/types.go).
 
 Two things follow from this. First, Dapr is unambiguously already in the identity
 business — Sentry is a CA *and* an OIDC issuer, and daprd already attaches
@@ -80,16 +98,27 @@ this call on behalf of user X." Concretely, none of the following exist:
 - An actor chain (`act`) recording which agents and services participated in a
   call.
 
+Two absence searches support that. `components-contrib` has exactly ten component-type
+directories on master — `bindings`, `configuration`, `conversation`, `crypto`, `lock`,
+`middleware`, `nameresolution`, `pubsub`, `secretstores`, `state` — and no `sts`; a
+repo-wide grep for `8693` / `token_exchange` / `tokenexchange` hits exactly one file,
+[`common/authentication/azure/spiffe.go`](https://github.com/dapr/components-contrib/blob/master/common/authentication/azure/spiffe.go),
+which is workload-identity client assertion rather than token exchange. And across all
+26 files in [`dapr/proposals`](https://github.com/dapr/proposals), a grep for
+`on.behalf.of`, `delegated authorit`, `security token service`, `token exchange` and
+`8693` returns only two incidental lines inside the MCPServer proposal describing an
+OAuth2 client-credentials failure mode. No prior or in-flight delegation proposal exists.
+
 The nearest existing pieces each fail for a distinct reason:
 
-| Mechanism | Why it doesn't solve this |
-| --- | --- |
-| `middleware.http.oauth2clientcredentials` | Statically configured per pipeline, all-or-nothing on the invoke path, no subject token, app identity only |
-| `middleware.http.bearer` | Validation of inbound tokens, not acquisition |
-| `secretstores` | Static credentials; wrong shape entirely |
-| `crypto` | Key operations on payloads, not token issuance |
-| Component Azure auth profiles | Perform a real exchange, but hardcoded per cloud and not reachable from application or workflow code |
-| `MCPServer.auth` (1.18) | `oauth2` client credentials and `spiffe.jwt` SVID injection — both app identity. `MCPAuth` is a two-variant union this proposal extends to three |
+| Mechanism | Why it doesn't solve this | Source |
+| --- | --- | --- |
+| `middleware.http.oauth2clientcredentials` | Statically configured per pipeline, all-or-nothing on the invoke path, no subject token, app identity only | [component source](https://github.com/dapr/components-contrib/blob/master/middleware/http/oauth2clientcredentials/oauth2clientcredentials_middleware.go); [docs](https://docs.dapr.io/reference/components-reference/supported-middleware/middleware-oauth2clientcredentials/) |
+| `middleware.http.bearer` | Validation of inbound tokens, not acquisition | [docs](https://docs.dapr.io/reference/components-reference/supported-middleware/middleware-bearer/) — "verifies a Bearer Token using OpenID Connect on a Web API" |
+| `secretstores` | Static credentials; wrong shape entirely | components-contrib directory listing |
+| `crypto` | Key operations on payloads, not token issuance | [docs](https://docs.dapr.io/developing-applications/building-blocks/cryptography/cryptography-overview/) |
+| Component Azure auth profiles | Perform a real exchange, but hardcoded per cloud and not reachable from application or workflow code | [`common/authentication/azure/spiffe.go`](https://github.com/dapr/components-contrib/blob/master/common/authentication/azure/spiffe.go) — `GetTokenCredential()` builds an `azidentity.ClientAssertionCredential` against `api://AzureADTokenExchange` |
+| `MCPServer.auth` (1.18) | `oauth2` client credentials and `spiffe.jwt` SVID injection — both app identity. `MCPAuth` is a two-variant union this proposal extends to three | [`types.go` @ `v1.18.3`](https://github.com/dapr/dapr/blob/v1.18.3/pkg/apis/mcpserver/v1alpha1/types.go) |
 
 ### 2.3 Why agents make this acute
 
@@ -123,11 +152,18 @@ identity.
 
 An egress proxy (agentgateway, Envoy, an AI gateway) can perform token exchange
 today. OSS agentgateway's `backendAuth.oauthTokenExchange` covers RFC 8693, RFC
-7523 JWT-bearer assertions, and Entra's on-behalf-of flow — all three
-open-sourced in July 2026, so the OSS tier is more capable than "gateway-side
+7523 JWT-bearer assertions (`grantType: jwtBearer`), and Entra's on-behalf-of flow
+(via `additionalParams` carrying `requested_token_use: on_behalf_of`) — all three
+[open-sourced in July 2026](https://agentgateway.dev/blog/2026-07-12-agentgateway-token-exchange-jwt-assertion-entra-obo/),
+so the OSS tier is more capable than "gateway-side
 config" suggests. Solo's enterprise build goes further still: a built-in STS with
 a token vault, delegation carrying a real `act` chain, impersonation,
-external-IdP delegation, and elicitation-based OAuth credential capture. The
+external-IdP delegation, and elicitation-based OAuth credential capture
+([Solo agentgateway 2.3.x token exchange docs](https://docs.solo.io/agentgateway/2.3.x/security/token-exchange/),
+which state that "the controller runs the Secure Token Service (STS) which does
+RFC 8693 token exchange and owns the token vault"). Both of those are vendor
+sources rather than code, and the OSS/Enterprise line in a commercial product
+moves; treat the boundary as point-in-time as of the 2.3.x docs. The
 alternative this proposal must beat is that one, not a thinner strawman. For stateless request/response
 egress, a gateway is a perfectly good answer and this proposal does not claim
 otherwise.
@@ -183,8 +219,8 @@ evaporated, because that is a workflow lifecycle event.
 - **Being a grant store.** Where long-lived delegation grants live is
   bring-your-own, referenced by opaque ID.
 - **Being an authorization server.** Dapr calls an STS; it does not become one.
-- **Impersonation.** RFC 8693 supports dropping the actor chain and presenting
-  purely as the subject. This proposal deliberately does not support it (see
+- **Impersonation.** RFC 8693 supports omitting the actor component entirely and
+  presenting purely as the subject. This proposal deliberately does not support it (see
   §7.4).
 - **Solving revocation propagation.** Named as an open question in §9, with a hook
   reserved, but out of scope for the initial implementation.
@@ -284,7 +320,10 @@ spec:
     - name: clientId
       value: "agent-platform"
     # No clientSecret. The sidecar authenticates with its Sentry JWT-SVID as a
-    # private_key_jwt-style client assertion (RFC 7523).
+    # private_key_jwt-style client assertion (RFC 7523 §2.2:
+    # client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer,
+    # https://www.rfc-editor.org/rfc/rfc7523.html — note "private_key_jwt" is
+    # OpenID Connect Core vocabulary and does not appear in RFC 7523, hence "-style").
     - name: clientAuthMethod
       value: "workload_identity"
     - name: audienceAllowlist
@@ -302,7 +341,7 @@ audience the operator did not sanction.
 | Component | Notes |
 | --- | --- |
 | `sts.rfc8693` | Generic, spec-literal. Target for Keycloak, Auth0, Ping, Okta. |
-| `sts.azure.entra` | Entra's OBO is *not* literal 8693 — `grant_type=jwt-bearer` with `requested_token_use=on_behalf_of`. This dialect divergence is the substantive justification for the abstraction. |
+| `sts.azure.entra` | Entra's OBO is *not* literal 8693 — `grant_type` MUST be `urn:ietf:params:oauth:grant-type:jwt-bearer`, `requested_token_use` is REQUIRED and MUST be `on_behalf_of`, and the inbound token travels in `assertion` rather than `subject_token` ([Microsoft's OBO reference](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow)). This dialect divergence is the substantive justification for the abstraction. |
 | `sts.gcp` | GCP STS parameter shape differs. Phase 3. |
 | `sts.aws` | AWS STS `AssumeRoleWithWebIdentity`. Phase 3, and only if the shape fits without distorting the interface. |
 
@@ -417,12 +456,14 @@ After:
           # subject and actor chain come from the delegation context at call time
 ```
 
-Note where this lands structurally. `MCPAuth` is already a union of `secretStore`,
-`oauth2`, and `spiffe`, so `onBehalfOf` is a **third variant of an existing
-union** rather than a new top-level `spec.auth` block. That is a materially
-smaller and more reviewable change than it first appears, and the CEL validation
-already enforcing exactly-one-transport establishes the pattern for enforcing
-exactly-one-auth-mode.
+Note where this lands structurally. `MCPAuth` is already
+`{secretStore, oauth2, spiffe}`, with `oauth2` and `spiffe` as the two credential
+modes, so `onBehalfOf` is a **third variant of an existing union** rather than a
+new top-level `spec.auth` block. That is a materially smaller and more reviewable
+change than it first appears, and the CEL validation already enforcing
+exactly-one-transport on `spec.endpoint` (`streamableHTTP` | `sse` | `stdio`)
+establishes the pattern for enforcing exactly-one-auth-mode. Both shapes are read
+from [`pkg/apis/mcpserver/v1alpha1/types.go` at `v1.18.3`](https://github.com/dapr/dapr/blob/v1.18.3/pkg/apis/mcpserver/v1alpha1/types.go).
 
 What is absent matters as much as what is present. No client secret, because the
 sidecar's SVID is the client assertion. No subject, because identity is runtime
@@ -618,17 +659,25 @@ and defaults problem.
 ### 7.2b Why encryption is not an alternative to non-persistence
 
 A reasonable reader will ask why the delegation context needs a non-persistence
-invariant at all, given that Dapr can already encrypt the workflow state store.
-The answer is that encryption and non-persistence solve different problems, and
-substituting one for the other produces a design that looks safe and is not.
+invariant at all, rather than simply encrypting what gets written. The answer has
+two parts, and the first is blunter than it should be: **Dapr cannot encrypt
+workflow history today.** Its automatic state-store encryption is applied at the
+state building block's public API, not attached to the store object, so the actor
+path that workflow history is written on never reaches it — traced in [the Dapr
+Workflow / Temporal comparison in this
+repository](dapr-workflow-vs-temporal.md). Anything a workflow records is at rest
+in the clear unless the backing database encrypts it.
+
+The second part is the one that survives even after that coverage gap is closed.
+Encryption and non-persistence solve different problems, and substituting one for
+the other produces a design that looks safe and is not.
 
 There are two distinct history-hygiene problems in any event-sourced engine.
 **Business payloads** are legitimately recorded and legitimately need to be
 readable later; for those, encryption with a controlled decode path is the
-correct answer, and the gaps in Dapr's current story there — granularity,
-pluggability, and the absence of a key-free decode path for tooling — are
-analyzed separately in [the Dapr Workflow / Temporal comparison in this
-repository](dapr-workflow-vs-temporal.md).
+correct answer, and what Dapr would still lack after extending encryption to the
+actor path — granularity, pluggability, and a key-free decode path for tooling —
+is analyzed in the same document.
 
 **Credentials are not that case.** Replay hands back the recorded result of an
 activity, so a token written into history is stale by the time anything reads it
@@ -637,7 +686,10 @@ one, which is no more correct. Worse, it is a bearer secret at rest with a
 lifetime governed by the workflow's retention policy rather than the token's
 `exp`. This is why §4.2 states the invariant as never-persist rather than
 persist-encrypted, and why §11.3 enforces it by scanning raw state store bytes:
-the property must be structural, not configurable.
+the property must be structural, not configurable. Note that on today's Dapr the
+scan in §11.3 is not a belt-and-braces check against a second layer of
+protection — it is the only thing standing between a leaked credential and a
+plaintext database row.
 
 The two mechanisms are complements. A complete durable-execution security story
 needs a payload codec for the data and a delegation context for the authority,
@@ -647,13 +699,22 @@ and neither substitutes for the other.
 
 The runtime must never forward an inbound token to an upstream target. Every
 outbound credential is minted by the STS for a specific audience. This aligns with
-MCP's security guidance and is enforced structurally: `SubjectToken` is available
+MCP's security guidance — revision 2026-07-28 states that "MCP servers **MUST NOT**
+accept any tokens that were not explicitly issued for the MCP server"
+([Security Best Practices, Token Passthrough](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices))
+— and is enforced structurally: `SubjectToken` is available
 only as exchange input, never as injection material.
 
 ### 7.4 Delegation, not impersonation
 
-RFC 8693 permits impersonation, where `sub` becomes the user and the actor chain
-is dropped, rendering the agent invisible in downstream logs. This proposal does
+[RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) permits impersonation:
+where no actor component is supplied at all, `sub` becomes the user and the
+resulting token is, in the RFC's words, indistinguishable from one issued
+directly to that user — rendering the agent invisible in downstream logs. (The
+RFC frames impersonation as the *absence* of an actor component rather than the
+removal of an existing chain; a delegation chain is expressed by "nesting one
+`act` claim within another", and `actor_token_type` is REQUIRED whenever
+`actor_token` is present.) This proposal does
 not support it. For anything where a model chose the action, the ability to prove a
 model chose the action is essential. If a future use case demands impersonation, it
 should arrive as a separate, loudly-flagged proposal.
@@ -907,9 +968,16 @@ Expect: *"Dapr should not be in the identity business. That is what a service me
 or gateway is for."*
 
 The response is that Dapr already is, and has been for some time. Sentry is a
-certificate authority and, since 1.16, an OIDC issuer. Components perform federated
-identity exchange with Entra. As of 1.18, daprd injects SPIFFE JWT-SVIDs into
-outbound MCP tool calls when an `MCPServer` is configured with `auth.spiffe.jwt`.
+certificate authority and, since 1.16, an OIDC issuer
+([`pkg/sentry/server/oidc/oidc.go`](https://github.com/dapr/dapr/blob/12463d2bfd849eabaef5c2873b314d5d74f861e9/pkg/sentry/server/oidc/oidc.go),
+absent at `v1.15.0` and present at `v1.16.0`). Components perform federated
+identity exchange with Entra
+([`common/authentication/azure/spiffe.go`](https://github.com/dapr/components-contrib/blob/master/common/authentication/azure/spiffe.go)).
+As of 1.18, daprd injects SPIFFE JWT-SVIDs into
+outbound MCP tool calls when an `MCPServer` is configured with `auth.spiffe.jwt` —
+the `SPIFFEJWT` type names the header, an optional value prefix, and a required
+audience, so this is opt-in configuration rather than automatic behavior
+([`pkg/apis/mcpserver/v1alpha1/types.go` @ `v1.18.3`](https://github.com/dapr/dapr/blob/v1.18.3/pkg/apis/mcpserver/v1alpha1/types.go)).
 That line was crossed a year ago.
 
 The question actually on the table is not whether Dapr does identity. It is whether

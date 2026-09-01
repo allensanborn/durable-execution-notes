@@ -192,6 +192,40 @@ Plus a provenance gate, below, which is local and cheap.
 
 **The ordering is a real engineering decision, not an implementation detail.** Run them cheapest-and-most-local first, because this happens on *every activity*: provenance check and grant match are in-process with no network; the ReBAC Check is a cacheable network call; contract policy is a network call needing tenant policy data. Failing fast on the free checks is what makes per-activity enforcement affordable.
 
+*Component view, zooming into the ENFORCEMENT HOOK box of the layers diagram above: in what order do the gates run, and which of them cost a network call?*
+
+```mermaid
+flowchart TB
+    IN["Activity scheduled<br/><small>action.type from the activity name,<br/>action.args from its typed input</small>"]
+
+    subgraph LOC["In process: no network, runs on every activity"]
+        G1{"Provenance gate<br/><small>do the grant-constrained fields<br/>carry trusted provenance?</small>"}
+        G2{"Grant match<br/><small>structural comparison of the typed action<br/>against authorization_details</small>"}
+    end
+
+    subgraph NET["Network: cacheable first, then per-tenant contract data"]
+        G3{"Entitlement check<br/><small>OpenFGA or SpiceDB Check API</small>"}
+        G4{"Contract policy<br/><small>OPA, Cerbos or Cedar,<br/>with per-tenant policy data</small>"}
+    end
+
+    ALLOW(["allow: run the activity"])
+    DENY(["deny, with reason"])
+    ESC(["escalate: suspend and wait for a human"])
+
+    IN --> G1
+    G1 -->|"constrained fields are trusted"| G2
+    G1 -->|"an untrusted value reached a constrained field"| DENY
+    G2 -->|"action falls inside the grant"| G3
+    G2 -->|"action falls outside the grant"| DENY
+    G2 -->|"inside the grant but over a step-up threshold"| ESC
+    G3 -->|"principal is related to this resource"| G4
+    G3 -->|"no such relationship"| DENY
+    G4 -->|"this tenant's contract permits it"| ALLOW
+    G4 -->|"this tenant's contract forbids it"| DENY
+```
+
+**Key.** The two boxed zones group gates by cost, not by ownership: everything in the upper zone is in-process and free, everything in the lower zone is a network call. Diamonds are decision points, rounded boxes are terminal outcomes. Reading top to bottom is the required execution order.
+
 The decision request the runtime assembles:
 
 ```json
@@ -236,6 +270,29 @@ Two rules, both **provable rather than policy**, so the engine can enforce them 
 The grant match should return **three** outcomes, not two: `allow`, `deny`, and **`escalate`**.
 
 This is where durable execution has an advantage that is not rhetorical. P10 said step-up authorization has no natural home, and the reason is that **every other layer in the stack is request-scoped**: a gateway, an IdP and a resource server all have to answer *now*. A durable workflow can wait. So `escalate` suspends the workflow on an external event, a human approves hours later, and the run resumes with an elevated grant recorded as a new history event.
+
+*Dynamic view, container level, of a **proposed** third outcome that no engine implements today: what happens between the escalate decision and the run resuming?*
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant ORC as Orchestrator
+    participant HK as Enforcement hook
+    participant HUM as Human approver
+    participant ACT as Activity
+    participant H as Durable history
+
+    ORC->>HK: schedule claims.adjust, amount over the step-up threshold
+    HK-->>ORC: escalate (neither allow nor deny)
+    ORC->>H: record the escalation as a history event
+    ORC->>HUM: raise an approval request
+    Note over ORC,HUM: the run SUSPENDS here. A gateway, an IdP and a<br/>resource server are all request-scoped and would have to<br/>answer now. A durable run can wait hours or days.
+    HUM-->>ORC: external event: approved
+    ORC->>H: record the elevated grant as a new history event
+    ORC->>HK: reschedule the activity with the elevated grant
+    HK->>ACT: allow
+    ACT-->>H: business result only, never the token
+```
 
 Waiting for a human is a thing workflow engines are already excellent at. Step-up authorization turns out to be a durable-execution-shaped problem that has been living in the wrong layer.
 
