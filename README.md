@@ -1,10 +1,20 @@
 # Durable execution notes
 
-Working notes on durable-execution engines: how they actually behave, where their control surfaces differ, and which of those differences change a design decision.
+Working notes on durable-execution engines and the authorization problems they inherit: how these systems actually behave, where their control surfaces differ, and which of those differences change a design decision.
 
 ## Notes
 
 - [**Dapr Workflow vs. Temporal: where the gaps actually are**](dapr-workflow-vs-temporal.md) — both are log-based, event-sourced engines that recover by deterministic replay, so the differences are not in the core model. They are in execution control (Dapr has no activity timeouts and no heartbeat), versioning, payload ceilings, and history hygiene. Includes a summary table and a choosing-between-them section.
+
+## Agent authorization
+
+- [**What actually implements RFC 8693 and RFC 9396**](rfc-8693-and-9396-in-practice.md) — an implementation survey finding that the two halves of agent authorization are in wildly different states: OAuth token exchange is a shipping commodity across Keycloak, ZITADEL, Authlete, Auth0 and every serious gateway, while Rich Authorization Requests is a ratified standard that zero of nineteen reachable public authorization servers advertised in discovery as of August 2026. The sample is biased against RAR by construction and says so. Includes the argument that RFC 9396 enforcement is custom by specification, and that the exception is a workflow engine, which owns its own action boundary.
+
+- [**Typed grants and provenance in a durable execution engine**](typed-grants-in-a-durable-engine.md) — the design notes the delegated-identity proposal was cut down from, covering the three things that proposal dropped: how a runtime composes with an enterprise IdP protocol by being the attestation underneath it and terminating it at the edge, why a policy building block should abstract the question rather than the engine and leave relationship writes alone, and why in a durable workflow the activity signature *is* the typed transaction.
+
+- [**Multi-tenant agentic workflows: a worked reference architecture**](multi-tenant-agentic-workflows.md) — one regulated multi-tenant use case driven out into layers, twelve named failure points, and an honest inventory of what a durable runtime already covers, which is more than the usual telling admits. Works out what the grant object holds, why the activity boundary asks three separate policy questions belonging in three different engines, and why step-up authorization is a durable-execution-shaped problem living in the wrong layer.
+
+- [**Typed intent, open intent, and the limits of agent authorization**](typed-intent-and-containment.md) — the argument that the useful line runs between typed and open intent rather than between authorization and judgment: RFC 9396 binds a refund because a refund has fields, and binds nothing about "clean up the staging environment" because that has none. Covers why the dangerous failure is the quiet in-distribution one, and what credential brokering and taint tracking each stop short of.
 
 ## Proposals
 
